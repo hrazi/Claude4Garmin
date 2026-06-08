@@ -10,6 +10,7 @@ This file is the PyInstaller entry point (garmin_coach.spec).
 It is also runnable directly in dev mode: python launcher.py
 """
 
+import os
 import sys
 import threading
 import time
@@ -20,6 +21,26 @@ from pathlib import Path
 # paths must be imported before server so APP_PORT is resolved on the correct port
 import coach.paths  # noqa: F401 — side-effect: ensures user_data_dir exists
 from coach.paths import bundle_dir, user_data_dir
+
+
+# ---------------------------------------------------------------------------
+# Browser auto-open
+# ---------------------------------------------------------------------------
+
+def _browser_autoopen_enabled() -> bool:
+    """
+    Whether to auto-open the browser on startup.
+
+    Suppressed when GHC_NO_BROWSER is set to a truthy value — used by the macOS
+    LaunchAgent so login auto-start runs silently in the tray. Manual launches
+    and the tray "Open" action are unaffected.
+    """
+    return os.environ.get("GHC_NO_BROWSER", "").strip().lower() not in ("1", "true", "yes")
+
+
+def _autoopen_browser(url: str) -> None:
+    if _browser_autoopen_enabled():
+        webbrowser.open(url)
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +192,7 @@ def main() -> None:
             live_url = f"http://127.0.0.1:{existing_port_str}"
         except Exception:
             live_url = app_url
-        webbrowser.open(live_url)
+        _autoopen_browser(live_url)
         sys.exit(0)
 
     # Start the FastAPI server in a daemon thread
@@ -187,10 +208,10 @@ def main() -> None:
     health_url = f"{app_url}/health"
     ready = _wait_for_server(health_url, timeout=30.0)
     if ready:
-        webbrowser.open(app_url)
+        _autoopen_browser(app_url)
     else:
         # Server failed to start — open settings so user can see an error
-        webbrowser.open(f"{app_url}/settings")
+        _autoopen_browser(f"{app_url}/settings")
 
     # Hand off to the tray icon (blocks until Quit)
     try:

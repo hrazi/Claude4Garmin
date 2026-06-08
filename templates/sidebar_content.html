@@ -30,8 +30,8 @@
           <span class="summary-label">Sleep</span>
         </div>
         <div class="summary-metric">
-          <span class="summary-value">{{ today_ready.score if today_ready.score is not none else "—" }}</span>
-          <span class="summary-label">Ready</span>
+          <span class="summary-value"{% if today_ready.estimated %} title="Estimated — this device has no native Training Readiness; based on sleep, HRV, stress & resting HR"{% endif %}>{% if today_ready.score is not none %}{{ "~" if today_ready.estimated else "" }}{{ today_ready.score }}{% else %}—{% endif %}</span>
+          <span class="summary-label">{{ "Ready*" if today_ready.estimated else "Ready" }}</span>
         </div>
       </div>
       {% endif %}
@@ -77,8 +77,8 @@
                 <td class="{% if hrv_e and hrv_e.status %}hrv-cell hrv-{{ hrv_e.status | lower }}{% endif %}">
                   {{ hrv_e.last_night_avg | int if hrv_e and hrv_e.last_night_avg else "—" }}
                 </td>
-                <td class="{% if tr_e and tr_e.level %}ready-cell ready-{{ tr_e.level | lower }}{% endif %}">
-                  {{ tr_e.score if tr_e and tr_e.score is not none else "—" }}
+                <td class="{% if tr_e and tr_e.level %}ready-cell ready-{{ tr_e.level | lower }}{% endif %}"{% if tr_e and tr_e.estimated %} title="Estimated readiness (no native score on this device)"{% endif %}>
+                  {% if tr_e and tr_e.score is not none %}{{ "~" if tr_e.estimated else "" }}{{ tr_e.score }}{% else %}—{% endif %}
                 </td>
               </tr>
               {% endif %}
