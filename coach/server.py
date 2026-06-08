@@ -43,7 +43,7 @@ from . import settings_manager as sm
 from . import skills_manager as skm
 from . import memory_manager as mm
 from . import token_tracker as tt
-from .garmin_client import get_garmin_client, fetch_health_data, format_health_summary, format_trend_summary
+from .garmin_client import get_garmin_client, fetch_health_data, format_health_summary, format_trend_summary, fill_readiness_estimates
 from .claude_client import ClaudeCoach
 from .paths import bundle_dir, user_data_dir
 
@@ -146,6 +146,9 @@ async def _connect() -> None:
         # Merge fresh data into the cached baseline, then persist
         if cache is not None:
             raw = dc.merge(cache["health_data"], raw, days_back)
+        # Re-estimate readiness across the merged window so today's estimate uses
+        # the full resting-HR baseline (and older cached days get backfilled).
+        fill_readiness_estimates(raw)
         dc.save_cache(raw)
 
         health_data = raw
@@ -420,7 +423,7 @@ async def index(request: Request):
     if not garmin_connected or not coach:
         return RedirectResponse("/settings")
     settings = sm.load_settings()
-    return templates.TemplateResponse("index.html", {
+    return templates.TemplateResponse(request, "index.html", {
         "request": request,
         "health_summary": health_summary,
         "health_data": health_data,
@@ -454,7 +457,7 @@ def _get_local_ip() -> str:
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, error: str = "", success: str = ""):
     existing = cm.load_all_credentials()
-    return templates.TemplateResponse("settings.html", {
+    return templates.TemplateResponse(request, "settings.html", {
         "request": request,
         "garmin_email": existing.get("garmin_email") or "",
         "has_password": bool(existing.get("garmin_password")),
@@ -526,7 +529,7 @@ async def health():
 @app.get("/api/sidebar-html", response_class=HTMLResponse)
 async def api_sidebar_html(request: Request):
     """Return the rendered sidebar partial for in-place DOM refresh (no page reload)."""
-    return templates.TemplateResponse("sidebar_content.html", {
+    return templates.TemplateResponse(request, "sidebar_content.html", {
         "request":        request,
         "health_data":    health_data,
         "nutrition_data": nutrition_data,

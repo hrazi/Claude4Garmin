@@ -53,7 +53,7 @@
             {% set _ts    = health_data.training_status %}
             <p>Hello{% if athlete_profile.name %}, {{ athlete_profile.name }}{% endif %}! I've loaded your latest Garmin data.{% if _ts and _ts.label %} Your current training status is <strong>{{ _ts.label }}</strong>.{% endif %}
             {% if _sleep.score is not none %} Last night's sleep score was <strong>{{ _sleep.score }}/100</strong>{% if _sleep.total_seconds %} ({{ _sleep.total_seconds | hm }}){% endif %}.{% endif %}
-            {% if _ready.score is not none %} Training readiness: <strong>{{ _ready.score }}/100</strong>.{% elif _stats.body_battery is not none %} Body battery: <strong>{{ _stats.body_battery }}%</strong>.{% endif %}
+            {% if _ready.score is not none %} Training readiness{% if _ready.estimated %} (estimated){% endif %}: <strong>{{ "~" if _ready.estimated else "" }}{{ _ready.score }}/100</strong>.{% elif _stats.body_battery is not none %} Body battery: <strong>{{ _stats.body_battery }}%</strong>.{% endif %}
             {% if _stats.steps is not none %} Steps so far today: <strong>{{ _stats.steps | compact }}</strong>.{% endif %}</p>
             {% if athlete_profile.goal %}<p>I know you're working towards: <em>{{ athlete_profile.goal }}</em>. I'll keep that in mind as we talk.</p>{% endif %}
             <p>Ask me anything about your activity, sleep, stress, or recovery — I'll give you specific, actionable insights.</p>

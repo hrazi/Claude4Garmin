@@ -67,6 +67,170 @@ READINESS_LEVEL_LABELS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Training Readiness estimation (for devices without a native score)
+# ---------------------------------------------------------------------------
+#
+# Garmin's Training Readiness (0-100) is a proprietary Firstbeat algorithm that
+# combines sleep, HRV status, recovery time, acute training load, and stress
+# history. Older devices such as the fenix 6X do not compute it, so the API
+# returns nothing and the app would otherwise show "-".
+#
+# When a real score is unavailable we approximate one from the morning-stable
+# signals we already collect, weighted by Garmin's documented relative impact:
+#   - Sleep score        (HIGH)      35%
+#   - HRV vs. baseline   (HIGH)      30%
+#   - Stress (inverse)   (MODERATE)  20%
+#   - Resting HR vs base (MODERATE)  15%
+# A meaningful estimate requires at least one high-impact signal (sleep or HRV).
+
+def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
+    return max(low, min(high, value))
+
+
+def _median(values: list[float]) -> float | None:
+    nums = sorted(v for v in values if v is not None)
+    if not nums:
+        return None
+    mid = len(nums) // 2
+    if len(nums) % 2:
+        return float(nums[mid])
+    return (nums[mid - 1] + nums[mid]) / 2.0
+
+
+def _readiness_level(score: float) -> str:
+    """Map a 0-100 score to Garmin's readiness bands."""
+    if score >= 90:
+        return "VERY_HIGH"
+    if score >= 75:
+        return "HIGH"
+    if score >= 50:
+        return "MODERATE"
+    return "LOW"
+
+
+def _hrv_subscore(hrv_entry: dict | None) -> float | None:
+    """Score HRV recovery 0-100 from last-night value vs. weekly baseline + status."""
+    if not hrv_entry:
+        return None
+    last = hrv_entry.get("last_night_avg")
+    base = hrv_entry.get("weekly_avg")
+    status = (hrv_entry.get("status") or "").upper()
+
+    ratio_sub = None
+    if last and base:
+        ratio = last / base
+        # At baseline -> 75; each 1% above/below shifts ~2.5 points.
+        ratio_sub = _clamp(75 + (ratio - 1.0) * 250)
+
+    status_anchor = {
+        "BALANCED": 80,
+        "LOW": 35,
+        "UNBALANCED": 45,
+        "POOR": 30,
+    }.get(status)
+
+    if ratio_sub is None:
+        return float(status_anchor) if status_anchor is not None else None
+    if status_anchor is not None:
+        # Blend the measured ratio with the status label.
+        return _clamp(0.6 * ratio_sub + 0.4 * status_anchor)
+    return ratio_sub
+
+
+def _rhr_subscore(rhr: float | None, baseline: float | None) -> float | None:
+    """Score resting HR 0-100: at/below personal baseline = better recovery."""
+    if not rhr or not baseline:
+        return None
+    # Each bpm below baseline adds ~5 points (and vice versa).
+    return _clamp(70 + (baseline - rhr) * 5)
+
+
+def estimate_training_readiness(
+    sleep_entry: dict | None,
+    hrv_entry: dict | None,
+    stats_entry: dict | None,
+    rhr_baseline: float | None = None,
+) -> tuple[int | None, str | None]:
+    """
+    Approximate a Garmin-style Training Readiness score (0-100) for devices that
+    don't compute one natively (e.g. fenix 6X).
+
+    Returns (score, level) or (None, None) when there isn't enough signal
+    (requires at least a sleep score or an HRV reading).
+    """
+    sleep_score = (sleep_entry or {}).get("score")
+    hrv_sub = _hrv_subscore(hrv_entry)
+
+    # Require at least one high-impact recovery signal.
+    if sleep_score is None and hrv_sub is None:
+        return None, None
+
+    components: list[tuple[float, float]] = []  # (subscore, weight)
+    if sleep_score is not None:
+        components.append((_clamp(float(sleep_score)), 0.35))
+    if hrv_sub is not None:
+        components.append((hrv_sub, 0.30))
+
+    stress = (stats_entry or {}).get("stress_avg")
+    if stress is not None:
+        components.append((_clamp(100 - float(stress)), 0.20))
+
+    rhr_sub = _rhr_subscore((stats_entry or {}).get("resting_hr"), rhr_baseline)
+    if rhr_sub is not None:
+        components.append((rhr_sub, 0.15))
+
+    total_weight = sum(w for _, w in components)
+    score = round(sum(sub * w for sub, w in components) / total_weight)
+    score = int(_clamp(score))
+    return score, _readiness_level(score)
+
+
+def fill_readiness_estimates(health_data: dict) -> dict:
+    """
+    Fill estimated Training Readiness scores in-place for any day that lacks a
+    real device score, using same-day sleep/HRV/stress and a personal resting-HR
+    baseline drawn from the available window.
+
+    Idempotent: never overwrites a genuine Garmin score, and refreshes prior
+    estimates (a longer history yields a better RHR baseline). Estimated entries
+    are flagged with ``estimated: True``.
+    """
+    readiness = health_data.get("training_readiness")
+    if not readiness:
+        return health_data
+
+    sleep_by_date = {e["date"]: e for e in health_data.get("sleep", []) if "date" in e}
+    hrv_by_date = {e["date"]: e for e in health_data.get("hrv", []) if "date" in e}
+    stats_by_date = {e["date"]: e for e in health_data.get("daily_stats", []) if "date" in e}
+
+    rhr_baseline = _median(
+        [e.get("resting_hr") for e in health_data.get("daily_stats", []) if e.get("resting_hr")]
+    )
+
+    for entry in readiness:
+        date_str = entry.get("date")
+        if not date_str:
+            continue
+        # Preserve real device scores; only (re)fill missing or estimated ones.
+        if entry.get("score") is not None and not entry.get("estimated"):
+            continue
+        score, level = estimate_training_readiness(
+            sleep_by_date.get(date_str),
+            hrv_by_date.get(date_str),
+            stats_by_date.get(date_str),
+            rhr_baseline,
+        )
+        if score is not None:
+            entry["score"] = score
+            entry["level"] = level
+            entry["estimated"] = True
+            entry["recovery_time_h"] = entry.get("recovery_time_h")
+            entry.pop("error", None)
+
+    return health_data
+
+
 def _prompt_mfa() -> str:
     """Callback for Garmin 2FA — prompts the user interactively."""
     return input("Enter your Garmin 2FA code: ").strip()
@@ -89,13 +253,12 @@ def get_garmin_client(email: str, password: str) -> Garmin:
         except Exception:
             pass  # Session expired or invalid — fall through to fresh login
 
-    # Fresh login; prompt_mfa is only called if Garmin requires 2FA
+    # Fresh login; prompt_mfa is only called if Garmin requires 2FA.
+    # Passing tokenstore makes login() persist the OAuth tokens automatically,
+    # so the next run can restore the session without re-authenticating.
     client = Garmin(email=email, password=password, prompt_mfa=_prompt_mfa)
-    client.login()
-
-    # Persist tokens so the next run skips re-authentication
     SESSION_DIR.mkdir(exist_ok=True)
-    client.garth.dump(str(SESSION_DIR))
+    client.login(tokenstore=str(SESSION_DIR))
 
     return client
 
@@ -548,6 +711,10 @@ def fetch_health_data(
         except Exception as e:
             health_data["body_composition_error"] = str(e)
 
+    # Estimate Training Readiness for any day the device didn't score natively.
+    if fetch_readiness:
+        fill_readiness_estimates(health_data)
+
     return health_data
 
 
@@ -670,6 +837,9 @@ def format_health_summary(
                 if not r or r.get("score") is None:
                     return "-"
                 lbl = READINESS_LEVEL_LABELS.get(r.get("level", ""), "")
+                if r.get("estimated"):
+                    tag = f"{lbl},est" if lbl else "est"
+                    return f"~{r['score']}({tag})"
                 return f"{r['score']}({lbl})" if lbl else str(r["score"])
             cols.append(("Ready", _ready_val))
         # Sleep columns
@@ -696,6 +866,17 @@ def format_health_summary(
                 vals.append(getter(day, h=hrv, r=rdy, sl=slp))
             lines.append(f"  {date_str} | " + " | ".join(vals))
         lines.append("")
+
+        # Explain the estimated readiness so the coach never presents it as a
+        # device-measured value.
+        if any(e.get("estimated") for e in health_data.get("training_readiness", [])):
+            lines.append(
+                "Note: 'Ready' values shown as '~N(...,est)' are ESTIMATED — this "
+                "device has no native Training Readiness score. The estimate blends "
+                "sleep score, HRV vs. baseline, stress, and resting HR vs. baseline. "
+                "Treat it as a rough recovery guide, not a Garmin-calculated score."
+            )
+            lines.append("")
 
     # ── Activities ────────────────────────────────────────────────────────────
     if health_data.get("activities") is not None:
