@@ -1,0 +1,31 @@
+{
+  "_comment": "Single source of truth for desktop-build.sh and desktop-quit.sh. Copy this file to scripts/app-it.config.json and customize. Both scripts read it; APPS-table drift (where they had separate copies) is structurally impossible.",
+  "_fields": {
+    "name": "Display name. Non-ASCII OK (e.g. 'Momó Studio'). The build script will substitute this verbatim into Info.plist's CFBundleName and the bundle's directory name.",
+    "slug": "File-safe slug. Lowercase, hyphens. Used for assets/<slug>-icon.png plus namespaced app-it runtime and log paths.",
+    "port": "Preferred frontend port. With port_mode 'fallback' (default), the launcher tries this first, then scans [port..port+50] for a free port. With port_mode 'fixed', this exact port is required and launch refuses fallback so browser storage stays tied to one origin. Records actual runtime port to ~/Library/Application Support/app-it/<slug>/server.port.",
+    "port_mode": "Optional: 'fallback' (default) or 'fixed'. Use 'fixed' only when browser storage, OAuth callbacks, or project config must stay on exactly http://localhost:<port>.",
+    "start_command": "Command to start the dev server, run from PROJECT_ROOT. Must honor PORT env var. Vite needs --port via CLI: 'npm run dev -- --port $PORT'. Avoid hardcoded -p literals — use direct framework binaries like 'pnpm exec next dev --hostname 127.0.0.1 --port $PORT' when package scripts wrap or hardcode Next flags.",
+    "bundle_id": "Reverse-DNS bundle identifier. Default 'com.user.<slug>'. NEVER 'com.<your-mac-username>.*' — LaunchServices may reject with error -600.",
+    "version": "Marketing version. Doesn't matter for unsigned use; pick anything semver-shaped.",
+    "polyfill_path": "Optional absolute path to a JS polyfill file (FSA shim). Use @ROOT@ to reference the repo root: '@ROOT@/assets/<slug>-polyfill.js'. Empty string when no polyfill is needed.",
+    "backend_port": "Optional. Set for A3.2 multi-server cohabiting apps. The backend service's preferred port. The launcher allocates a free port starting here for the backend, exports it as API_PORT to both processes.",
+    "backend_start_command": "Optional. The command to start the backend service. Must honor API_PORT env var. The frontend dev server (e.g. Vite) must proxy to http://localhost:$API_PORT (config edits required — see SKILL.md A3.2 section).",
+    "external_url": "Optional. When set, desktop-build.sh creates a URL-only launcher and ignores port/start_command/backend fields. Use this for published/shared Claude Artifact URLs so each user signs into Claude with their own plan. Aliases accepted: artifact_url, url."
+  },
+  "apps": [
+    {
+      "name": "My App",
+      "slug": "my-app",
+      "port": 3000,
+      "port_mode": "fallback",
+      "start_command": "pnpm exec next dev --hostname 127.0.0.1 --port $PORT",
+      "bundle_id": "com.user.my-app",
+      "version": "0.1.0",
+      "polyfill_path": "",
+      "backend_port": null,
+      "backend_start_command": null,
+      "external_url": ""
+    }
+  ]
+}

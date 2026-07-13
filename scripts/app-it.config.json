@@ -1,0 +1,18 @@
+{
+  "_comment": "app-it Strategy E (URL-only). Wraps the always-on local server (managed by the com.garminhealthcoach.launcher LaunchAgent) in a Dock-launchable native WebKit window. No second server is started by app-it; Cmd+Q closes the window only.",
+  "apps": [
+    {
+      "name": "Garmin Health Coach",
+      "slug": "garmin-health-coach",
+      "bundle_id": "com.garminhealthcoach.app",
+      "version": "1.0.0",
+      "external_url": "http://127.0.0.1:8000",
+      "port": "",
+      "port_mode": "fallback",
+      "start_command": "",
+      "polyfill_path": "",
+      "backend_port": null,
+      "backend_start_command": null
+    }
+  ]
+}

@@ -1,0 +1,142 @@
+# Desktop launcher
+
+Click an icon in `~/Applications/App It/` (or its Dock Stack) to launch.
+
+## First launch
+
+1. Right-click the app icon and choose **Open**, then click **Open** in the dialog. macOS remembers and skips this on subsequent launches (Gatekeeper, unsigned bundle).
+2. The first cold start takes 5–15 s while the dev server compiles. URL-only apps (for example, Claude Artifact wrappers) do not compile locally; first launch is WebKit startup plus sign-in/network time.
+3. If a "couldn't be opened" alert appears citing the dev server, open `~/Library/Logs/app-it/<slug>/server.log`. The alert quotes the tail; the full log usually shows the cause.
+
+## Apps
+
+- **__APP_NAME__** (`__APP_NAME__.app`) — __<one-line description, e.g. "the runtime demo on :__PORT__">__
+- **__APP_NAME_2__** (`__APP_NAME_2__.app`) — __<one-line description>__   *(if multi-app)*
+
+Each `.app` runs as a real macOS app with its own Dock icon and its own window — **not** a Chrome `--app` window. The `.app` embeds a small Swift WebKit shell so the Dock icon stays ours and macOS handles single-instance activation natively.
+
+## Launch behavior
+
+The launcher is **persistent** — designed for daily use, not single-shot demos.
+
+- **First click after boot:** 5–15 s for the dev server cold start.
+- **Closing the window with the red X does NOT kill the dev server.** It stays warm. Click the icon again and the window opens within ~250 ms.
+- **Cmd+Q (or right-click → Quit in the Dock) DOES kill the server.** Full-shutdown path — use when you actually want everything to stop.
+- **Re-clicking the icon while the window is open** brings the existing window forward. No second window.
+- **Sibling appified apps coexist by default.** With `port_mode: "fallback"`, if another `.app` already grabbed the configured port, this launcher scans upward and picks a free port. With `port_mode: "fixed"`, the configured port is required and a busy port fails clearly so browser storage stays on one origin. The runtime port is recorded at `~/Library/Application Support/app-it/<slug>/server.port`.
+- **Claude Artifact wrappers.** Sharing the `.app` shares only the hosted URL wrapper, not Claude credentials. Each recipient signs into Claude and uses their own plan.
+
+To stop the persistent dev servers from the terminal:
+
+```bash
+./scripts/desktop-quit.sh
+```
+
+Reboot also works.
+
+## Install / update
+
+```bash
+./scripts/desktop-build.sh    # rebuild .app bundle(s) under desktop/
+./scripts/desktop-install.sh  # copy them into ~/Applications/App It/, refresh Dock
+```
+
+The `~/Applications/App It/` folder is meant to live as a Dock Stack — drag it to the right side of the Dock once and every appified app shows up there automatically.
+
+## Replace an app icon
+
+Replace the source PNG (square, ≥ 1024×1024 ideal):
+
+- __APP_NAME__: `assets/__APP_SLUG__-icon.png`
+
+Check how it will actually look in the Dock *before* rebuilding (optional but recommended):
+
+```bash
+APP_NAME='__APP_NAME__' APP_SLUG='__APP_SLUG__' ./scripts/desktop-icons-preview.sh --open
+```
+
+This renders the icon at every Dock/Finder size on light and dark backgrounds and flags
+common problems in plain language (wordmark that smears at 16px, low contrast, too much
+transparent padding, sub-1024 source). Deterministic and local — nothing leaves your machine.
+
+Then:
+
+```bash
+./scripts/desktop-build.sh    # mtime-aware: regenerates icns automatically
+./scripts/desktop-install.sh  # icon-hash gated: refreshes Dock when bytes changed
+```
+
+If the Dock briefly shows a stale thumbnail after a reboot, drag the Stack out and back in to force-rebuild — the install step's automatic Dock refresh covers everything else.
+
+## Something's wrong? Diagnose it
+
+```bash
+./scripts/desktop-doctor.sh          # read-only health check for one launcher
+./scripts/desktop-doctor.sh --tail   # …and show the tail of the launcher log
+./scripts/desktop-doctor.sh --json   # machine-readable checks, counts, and ports
+./scripts/desktop-verify.sh          # headless smoke + doctor summary
+./scripts/desktop-verify.sh --json   # machine-readable verification summary
+```
+
+It checks the things that actually break a generated app — config, the installed
+`.app`, icon, bundle id, signature, quarantine, the preferred-vs-runtime port,
+stale processes, whether the running server really belongs to this launcher, and
+whether the installed launcher predates the current templates — and prints a
+short report you can paste straight into a bug report. It never touches your
+project; when it isn't sure, it says "probably".
+
+To clean up app-it's **own** generated state (stale pid/port files, a stale
+LaunchServices entry, a rebuilt icon, quarantine on the `.app`):
+
+```bash
+./scripts/desktop-doctor.sh --fix-safe
+```
+
+`--fix-safe` only ever touches app-it's generated artifacts — never your source,
+dependencies, or config. For multi-app projects, pass a slug to pick one:
+`./scripts/desktop-doctor.sh <slug>`.
+
+For automation, `./scripts/desktop-doctor.sh --json <slug>` emits valid JSON
+with selected app metadata, preferred/runtime ports, counts, and per-check
+records. `./scripts/desktop-verify.sh --json <slug>` wraps the behavior-first
+headless path: built/installed bundle status, APP_IT_SMOKE runtime launch,
+HTTP response, doctor summary, and manual labels for window/red-X/Cmd+Q checks
+that need a visible macOS session. Add `--strict` when warnings or failures
+should make the command fail.
+
+## Logs & runtime files
+
+Per app, logs live under `~/Library/Logs/app-it/<slug>/`:
+- `server.log` — dev-server output. If startup fails, an alert quotes the tail.
+- `backend.log` — *(multi-server only)* backend service output.
+
+Per app, runtime state lives under `~/Library/Application Support/app-it/<slug>/`:
+- `server.port` — the actual runtime port (may differ from the configured port only when `port_mode: "fallback"` kicked in).
+- `server.pid` — supervisor PID. The launcher's reattach gate walks this PID's descendant tree, so warm re-launch works for `pnpm`/`npm`/`yarn`/`bun`/`concurrently` chains.
+- `server.identity` — PID start-time proof, so stale or reused PID files are cleaned without stopping unrelated processes.
+- `backend.port`, `backend.pid`, `backend.identity` — *(multi-server only)* backend service equivalents.
+- `runtime.json` — *(multi-server only)* compact frontend/backend preferred-vs-runtime port summary for doctor/verify and automation.
+
+## Architecture
+
+```
+desktop/<App Name>.app/
+  Contents/
+    Info.plist                       # CFBundleExecutable = "run"
+    MacOS/
+      run                            # tiny native Mach-O stub (execs run.sh)
+      run.sh                         # bash launcher (server boot + exec wrapper)
+      wrapper                        # compiled Swift WebKit shell (universal)
+    Resources/
+      AppIcon.icns                   # generated from assets/<slug>-icon.png
+```
+
+`PROJECT_ROOT` is **baked at build time** so the bundle keeps working after it's copied to `~/Applications/App It/`. Re-run `./scripts/desktop-build.sh` if the repo ever moves. Worktree builds bake the worktree path — re-run from the canonical repo location after the worktree merges.
+
+## Known limitations
+
+- **Unsigned bundles.** First launch triggers Gatekeeper. Right-click → Open once and macOS remembers.
+- **Repo path is baked in.** Moving the repo means re-running `./scripts/desktop-build.sh && ./scripts/desktop-install.sh`.
+- **Persistent server.** Closing the window leaves the dev server running. That's intentional — it's why the second launch is fast — but it means `lsof -i :<port>` keeps showing bindings until you Cmd+Q the app, run `desktop-quit.sh`, or reboot.
+- **WebKit, not Chromium.** If you need Chrome devtools or a Chromium-only feature, point a regular browser tab at the runtime URL.
+- **Distribution to other users not supported.** Unsigned, no notarization, no auto-update. Your other Mac counts (universal arm64+x86_64 binary), but a colleague needs to right-click → Open the first time too.
