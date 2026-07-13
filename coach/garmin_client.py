@@ -291,6 +291,56 @@ def _seconds_to_hm(seconds: Optional[int]) -> str:
     return f"{h}h {m}m"
 
 
+def _normalize_activity(act: dict) -> dict:
+    """Map one raw Garmin activity dict to our flat, stable activity shape."""
+    return {
+        "activity_id":      str(_get(act, "activityId") or ""),
+        "name":             _get(act, "activityName"),
+        # activityType is a nested dict; typeKey is the human label
+        "type":             _get(act, "activityType", "typeKey"),
+        "date":             (_get(act, "startTimeLocal") or "")[:10],
+        "start_time":       _get(act, "startTimeLocal"),
+        "duration_seconds": _get(act, "duration"),
+        "moving_duration":  _get(act, "movingDuration"),
+        "distance_meters":  _get(act, "distance"),
+        "avg_hr":           _get(act, "averageHR"),
+        "max_hr":           _get(act, "maxHR"),
+        "calories":         _get(act, "calories"),
+        "elevation_gain":   _get(act, "elevationGain"),
+        "avg_power":        _get(act, "averagePower"),
+        "avg_cadence":      _get(act, "averageCadence"),
+        "avg_speed_mps":    _get(act, "averageSpeed"),
+    }
+
+
+def fetch_activity_history(
+    client,
+    limit: int = 3000,
+    page_size: int = 100,
+) -> list[dict]:
+    """
+    Fetch a long activity history from Garmin, paginating until exhausted.
+
+    Reuses the already-authenticated client (persisted token) — makes only
+    normal data GETs, never a fresh login, so it does not risk the login
+    rate-limit. Stops when a page returns fewer than page_size activities or
+    the limit is reached. Returns a flat list of normalized activity dicts,
+    newest first (as Garmin returns them).
+    """
+    activities: list[dict] = []
+    start = 0
+    while len(activities) < limit:
+        batch = client.get_activities(start, page_size)
+        if not batch:
+            break
+        for act in batch:
+            activities.append(_normalize_activity(act))
+        if len(batch) < page_size:
+            break
+        start += page_size
+    return activities[:limit]
+
+
 # ---------------------------------------------------------------------------
 # Trend pre-computation (uses 90-day cached archive)
 # ---------------------------------------------------------------------------
@@ -668,24 +718,7 @@ def fetch_health_data(
         try:
             raw_acts = client.get_activities(0, activity_count)
             for act in raw_acts:
-                health_data["activities"].append({
-                    "activity_id":    str(_get(act, "activityId") or ""),
-                    "name":           _get(act, "activityName"),
-                    # activityType is a nested dict; typeKey is the human label
-                    "type":           _get(act, "activityType", "typeKey"),
-                    "date":           (_get(act, "startTimeLocal") or "")[:10],
-                    "start_time":     _get(act, "startTimeLocal"),
-                    "duration_seconds": _get(act, "duration"),
-                    "moving_duration": _get(act, "movingDuration"),
-                    "distance_meters": _get(act, "distance"),
-                    "avg_hr":         _get(act, "averageHR"),
-                    "max_hr":         _get(act, "maxHR"),
-                    "calories":       _get(act, "calories"),
-                    "elevation_gain": _get(act, "elevationGain"),
-                    "avg_power":      _get(act, "averagePower"),
-                    "avg_cadence":    _get(act, "averageCadence"),
-                    "avg_speed_mps":  _get(act, "averageSpeed"),
-                })
+                health_data["activities"].append(_normalize_activity(act))
         except Exception as e:
             health_data["activities_error"] = str(e)
 

@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Training Log — Garmin Health Coach</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    /* ── Training Log page ───────────────────────────────────────────── */
+    .tl-wrap { max-width: 1200px; margin: 0 auto; padding: 20px 24px 80px; padding-top: calc(var(--header-h, 56px) + 20px); }
+
+    .tl-toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; flex-wrap: wrap; margin-bottom: 18px;
+    }
+    .tl-summary { display: flex; gap: 26px; flex-wrap: wrap; }
+    .tl-summary .stat .k { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #8a8f98; }
+    .tl-summary .stat .v { font-size: 20px; font-weight: 700; color: #2b2f36; }
+    .tl-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+    .tl-seg { display: inline-flex; border: 1px solid #d7dae0; border-radius: 8px; overflow: hidden; }
+    .tl-seg button {
+      border: 0; background: #fff; color: #4a4f57; padding: 7px 12px;
+      font-size: 13px; cursor: pointer; line-height: 1;
+    }
+    .tl-seg button + button { border-left: 1px solid #d7dae0; }
+    .tl-seg button.active { background: #2b2f36; color: #fff; }
+
+    .tl-refresh {
+      display: inline-flex; align-items: center; gap: 6px;
+      border: 1px solid #d7dae0; background: #fff; color: #4a4f57;
+      padding: 7px 12px; border-radius: 8px; font-size: 13px; cursor: pointer;
+    }
+    .tl-refresh:hover { background: #f4f5f7; }
+    .tl-refresh[disabled] { opacity: .55; cursor: default; }
+
+    /* Grid */
+    .tl-grid { border: 1px solid #ececf0; border-radius: 12px; overflow: hidden; background: #fff; }
+    .tl-row { display: grid; grid-template-columns: 190px repeat(7, 1fr); }
+    .tl-row + .tl-row { border-top: 1px solid #f0f0f3; }
+
+    .tl-head { background: #fbfbfc; }
+    .tl-head .tl-dow {
+      text-align: center; padding: 12px 4px; font-size: 12px; color: #8a8f98;
+      letter-spacing: .04em;
+    }
+    .tl-head .tl-wk { padding: 12px 16px; }
+
+    .tl-wk {
+      padding: 16px; border-right: 1px solid #f0f0f3; background: #fbfbfc;
+    }
+    .tl-wk .tl-year { font-size: 22px; font-weight: 800; color: #2b2f36; margin-bottom: 6px; }
+    .tl-wk .tl-range { font-size: 15px; font-weight: 700; color: #2b2f36; }
+    .tl-wk .tl-total-k { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #9aa0a8; margin-top: 10px; }
+    .tl-wk .tl-total-v { font-size: 15px; font-weight: 700; color: #5566d8; }
+
+    .tl-day {
+      padding: 14px 6px; display: flex; flex-direction: column; align-items: center;
+      gap: 14px; border-right: 1px solid #f6f6f8; min-height: 40px;
+    }
+    .tl-day:last-child { border-right: 0; }
+
+    .tl-act { display: flex; flex-direction: column; align-items: center; width: 100%; }
+    .tl-bubble {
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; color: #fff; font-weight: 700; font-size: 13px;
+      box-shadow: 0 1px 2px rgba(0,0,0,.12); flex: none;
+    }
+    .tl-act .tl-name {
+      margin-top: 7px; font-size: 11px; line-height: 1.25; color: #7a7f87;
+      text-align: center; max-width: 130px;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+
+    .tl-empty-week { color: #c3c7cd; font-size: 12px; padding: 10px 0; }
+
+    .tl-state { text-align: center; color: #8a8f98; padding: 60px 20px; font-size: 15px; }
+    .tl-error { color: #b4442f; }
+    .tl-note { font-size: 12px; color: #9aa0a8; margin-top: 10px; }
+
+    .tl-legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 14px 2px 0; }
+    .tl-legend .li { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #7a7f87; }
+    .tl-legend .dot { width: 12px; height: 12px; border-radius: 50%; }
+
+    @media (max-width: 720px) {
+      .tl-row { grid-template-columns: 120px repeat(7, 1fr); }
+      .tl-wk { padding: 10px; }
+      .tl-wk .tl-year { font-size: 16px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Header ─────────────────────────────────────────────────────── -->
+  <header class="header">
+    <div class="header-left">
+      <span class="header-icon">📖</span>
+      <span class="header-title">Training Log</span>
+    </div>
+    <div class="header-right">
+      <a href="/" class="btn-ghost">💬 <span class="btn-text">Coach</span></a>
+      <a href="/settings" class="btn-ghost">⚙ <span class="btn-text">Settings</span></a>
+    </div>
+  </header>
+
+  <div class="tl-wrap">
+
+    <div class="tl-toolbar">
+      <div class="tl-summary" id="tl-summary">
+        <div class="stat"><div class="k">Activities</div><div class="v" id="s-count">—</div></div>
+        <div class="stat"><div class="k">Total Distance</div><div class="v" id="s-dist">—</div></div>
+        <div class="stat"><div class="k">Range</div><div class="v" id="s-range">—</div></div>
+      </div>
+
+      <div class="tl-controls">
+        <div class="tl-seg" id="seg-filter" title="Which activities to show">
+          <button data-filter="runs" class="active">Runs</button>
+          <button data-filter="all">All</button>
+        </div>
+        <div class="tl-seg" id="seg-units" title="Distance units">
+          <button data-units="mi" class="active">mi</button>
+          <button data-units="km">km</button>
+        </div>
+        <button class="tl-refresh" id="btn-refresh" title="Re-fetch full history from Garmin">
+          <span id="refresh-ico">↻</span> <span class="btn-text">Refresh</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="tl-legend">
+      <span class="li"><span class="dot" style="background:#e2622c"></span>Run</span>
+      <span class="li"><span class="dot" style="background:#7cb342"></span>Walk / Hike</span>
+      <span class="li"><span class="dot" style="background:#3f8fd0"></span>Ride</span>
+      <span class="li"><span class="dot" style="background:#26a69a"></span>Swim</span>
+      <span class="li"><span class="dot" style="background:#8e7cc3"></span>Strength / Other cardio</span>
+      <span class="li"><span class="dot" style="background:#b08968"></span>Other</span>
+    </div>
+
+    <div id="tl-content">
+      <div class="tl-state" id="tl-loading">Loading your activity history…</div>
+    </div>
+
+    <div class="tl-note" id="tl-fetched"></div>
+  </div>
+
+  <script>
+    const DOW = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+    const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+    let ALL_ACTIVITIES = [];
+    let units  = localStorage.getItem("trainingLogUnits")  || "mi";
+    let filter = localStorage.getItem("trainingLogFilter") || "runs";
+
+    // ── helpers ──────────────────────────────────────────────────────
+    function activityColor(type) {
+      const t = (type || "").toLowerCase();
+      if (t.includes("run")) return "#e2622c";
+      if (t.includes("walk") || t.includes("hik")) return "#7cb342";
+      if (t.includes("cycl") || t.includes("bik") || t.includes("ride") || t.includes("zwift")) return "#3f8fd0";
+      if (t.includes("swim")) return "#26a69a";
+      if (t.includes("strength") || t.includes("cardio") || t.includes("yoga") ||
+          t.includes("elliptical") || t.includes("training")) return "#8e7cc3";
+      return "#b08968";
+    }
+    function isRun(a) { return ((a.type || "").toLowerCase()).includes("run"); }
+
+    function toDist(meters) {
+      if (!meters) return 0;
+      return units === "mi" ? meters / 1609.344 : meters / 1000;
+    }
+    function fmtNum(v) {
+      let s = v.toFixed(1);
+      if (s.endsWith(".0")) s = s.slice(0, -2);
+      return s;
+    }
+    function unitLabel() { return units; }
+
+    function parseDate(s) {
+      // "YYYY-MM-DD" (or longer) → local Date, avoiding UTC shift
+      if (!s) return null;
+      const p = s.slice(0, 10).split("-").map(Number);
+      if (p.length < 3 || !p[0]) return null;
+      return new Date(p[0], p[1] - 1, p[2]);
+    }
+    function mondayOf(d) {
+      const dt = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const off = (dt.getDay() + 6) % 7; // 0=Mon … 6=Sun
+      dt.setDate(dt.getDate() - off);
+      return dt;
+    }
+    function keyOf(d) { return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate(); }
+    function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+
+    function weekRangeLabel(mon) {
+      const end = addDays(mon, 6);
+      if (mon.getMonth() === end.getMonth())
+        return MON[mon.getMonth()] + " " + mon.getDate() + " – " + end.getDate();
+      return MON[mon.getMonth()] + " " + mon.getDate() + " – " + MON[end.getMonth()] + " " + end.getDate();
+    }
+
+    // ── rendering ────────────────────────────────────────────────────
+    function visibleActivities() {
+      let acts = ALL_ACTIVITIES.filter(a => parseDate(a.date));
+      if (filter === "runs") acts = acts.filter(isRun);
+      return acts;
+    }
+
+    function render() {
+      const content = document.getElementById("tl-content");
+      const acts = visibleActivities();
+
+      // summary
+      const totalMeters = acts.reduce((s, a) => s + (a.distance_meters || 0), 0);
+      document.getElementById("s-count").textContent = acts.length.toLocaleString();
+      document.getElementById("s-dist").textContent  =
+        fmtNum(toDist(totalMeters)) + " " + unitLabel();
+      const dated = acts.map(a => parseDate(a.date)).sort((a, b) => a - b);
+      document.getElementById("s-range").textContent = dated.length
+        ? (MON[dated[0].getMonth()] + " " + dated[0].getFullYear() + " – " +
+           MON[dated[dated.length - 1].getMonth()] + " " + dated[dated.length - 1].getFullYear())
+        : "—";
+
+      if (!acts.length) {
+        content.innerHTML = '<div class="tl-state">No ' +
+          (filter === "runs" ? "runs" : "activities") + " found in your history.</div>";
+        return;
+      }
+
+      // bucket by week-monday
+      const buckets = {};
+      let maxMeters = 0;
+      for (const a of acts) {
+        const d = parseDate(a.date);
+        const mon = mondayOf(d);
+        (buckets[keyOf(mon)] ||= { mon, items: [] }).items.push(a);
+        if ((a.distance_meters || 0) > maxMeters) maxMeters = a.distance_meters;
+      }
+      maxMeters = maxMeters || 1;
+
+      // circle diameter: area-ish scaling via sqrt
+      const MIN_D = 34, MAX_D = 82;
+      const diameter = m => {
+        if (!m) return MIN_D;
+        return Math.round(MIN_D + (MAX_D - MIN_D) * Math.sqrt(m / maxMeters));
+      };
+
+      // contiguous weeks, newest → oldest
+      const mondays = Object.values(buckets).map(b => b.mon).sort((a, b) => b - a);
+      const newest = mondays[0], oldest = mondays[mondays.length - 1];
+
+      let html = '<div class="tl-grid">';
+      // header row
+      html += '<div class="tl-row tl-head"><div class="tl-wk"></div>' +
+        DOW.map(d => '<div class="tl-dow">' + d + "</div>").join("") + "</div>";
+
+      let prevYear = null;
+      let emptyRun = [];   // consecutive empty weeks pending flush
+
+      // Collapse 2+ consecutive activity-free weeks into one compact separator,
+      // so a multi-year history doesn't render hundreds of blank rows. A single
+      // gap week is shown normally to preserve week-to-week rhythm.
+      const flushEmpty = () => {
+        if (!emptyRun.length) return;
+        if (emptyRun.length === 1) {
+          html += emptyWeekRow(emptyRun[0]);
+        } else {
+          const first = emptyRun[0], last = emptyRun[emptyRun.length - 1];
+          html += '<div class="tl-row"><div class="tl-wk">' +
+            '<div class="tl-range" style="color:#b7bbc2;font-weight:600">' +
+            weekRangeLabel(last).split(" – ")[0] + " – " + weekRangeLabel(first).split(" – ").pop() +
+            "</div></div>" +
+            '<div class="tl-empty-week" style="grid-column:2 / span 7;text-align:center">· ' +
+            emptyRun.length + " weeks with no " + (filter === "runs" ? "runs" : "activities") +
+            " ·</div></div>";
+        }
+        emptyRun = [];
+      };
+
+      const emptyWeekRow = (mon) => {
+        const year = mon.getFullYear();
+        const showYear = year !== prevYear; prevYear = year;
+        return '<div class="tl-row"><div class="tl-wk">' +
+          (showYear ? '<div class="tl-year">' + year + "</div>" : "") +
+          '<div class="tl-range" style="color:#b7bbc2">' + weekRangeLabel(mon) + "</div></div>" +
+          '<div class="tl-empty-week" style="grid-column:2 / span 7"></div></div>';
+      };
+
+      for (let mon = new Date(newest); mon >= oldest; mon = addDays(mon, -7)) {
+        const bucket = buckets[keyOf(mon)];
+        const items = bucket ? bucket.items.slice() : [];
+
+        if (!items.length) { emptyRun.push(new Date(mon)); continue; }
+        flushEmpty();
+
+        // order within a day: longest first looks tidiest
+        items.sort((a, b) => (b.distance_meters || 0) - (a.distance_meters || 0));
+
+        const year = mon.getFullYear();
+        const showYear = year !== prevYear;
+        prevYear = year;
+
+        const weekMeters = items.reduce((s, a) => s + (a.distance_meters || 0), 0);
+
+        // day columns
+        const byDay = [[], [], [], [], [], [], []];
+        for (const a of items) {
+          const d = parseDate(a.date);
+          byDay[(d.getDay() + 6) % 7].push(a);
+        }
+
+        let row = '<div class="tl-row">';
+        row += '<div class="tl-wk">' +
+          (showYear ? '<div class="tl-year">' + year + "</div>" : "") +
+          '<div class="tl-range">' + weekRangeLabel(mon) + "</div>" +
+          (items.length
+            ? '<div class="tl-total-k">Total Distance</div><div class="tl-total-v">' +
+              fmtNum(toDist(weekMeters)) + " " + unitLabel() + "</div>"
+            : "") +
+          "</div>";
+
+        for (let c = 0; c < 7; c++) {
+          row += '<div class="tl-day">';
+          for (const a of byDay[c]) {
+            const col = activityColor(a.type);
+            const dm = a.distance_meters || 0;
+            const dia = diameter(dm);
+            const label = (a.name || (a.type || "Activity").replace(/_/g, " "));
+            const distTxt = dm ? fmtNum(toDist(dm)) : "";
+            row += '<div class="tl-act" title="' + escapeHtml(label) + " — " +
+              fmtNum(toDist(dm)) + " " + unitLabel() + '">' +
+              '<div class="tl-bubble" style="width:' + dia + "px;height:" + dia +
+              "px;background:" + col + ";font-size:" + (dia < 42 ? 11 : 13) + 'px">' +
+              distTxt + "</div>" +
+              '<div class="tl-name">' + escapeHtml(label) + "</div>" +
+              "</div>";
+          }
+          row += "</div>";
+        }
+        row += "</div>";
+        html += row;
+      }
+      flushEmpty();   // trailing empty weeks (oldest end of history)
+      html += "</div>";
+      content.innerHTML = html;
+    }
+
+    function escapeHtml(s) {
+      return (s || "").replace(/[&<>"']/g, c =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    // ── data loading ─────────────────────────────────────────────────
+    async function load(refresh) {
+      const btn = document.getElementById("btn-refresh");
+      const ico = document.getElementById("refresh-ico");
+      if (refresh) { btn.disabled = true; ico.textContent = "…"; }
+      try {
+        const res = await fetch("/api/training-log" + (refresh ? "?refresh=1" : ""));
+        const data = await res.json();
+        ALL_ACTIVITIES = data.activities || [];
+        render();
+        const fetched = document.getElementById("tl-fetched");
+        let note = "";
+        if (data.fetched_at) note = "Last synced " + new Date(data.fetched_at).toLocaleString();
+        if (data.error) note = '<span class="tl-error">' + escapeHtml(data.error) +
+          "</span>" + (note ? " · " + note : "");
+        fetched.innerHTML = note;
+      } catch (e) {
+        document.getElementById("tl-content").innerHTML =
+          '<div class="tl-state tl-error">Could not load activity history: ' +
+          escapeHtml(String(e)) + "</div>";
+      } finally {
+        btn.disabled = false; ico.textContent = "↻";
+      }
+    }
+
+    // ── wire controls ────────────────────────────────────────────────
+    function setSeg(segId, attr, value, store) {
+      document.querySelectorAll("#" + segId + " button").forEach(b =>
+        b.classList.toggle("active", b.dataset[attr] === value));
+      localStorage.setItem(store, value);
+    }
+    document.getElementById("seg-filter").addEventListener("click", e => {
+      const b = e.target.closest("button"); if (!b) return;
+      filter = b.dataset.filter; setSeg("seg-filter", "filter", filter, "trainingLogFilter"); render();
+    });
+    document.getElementById("seg-units").addEventListener("click", e => {
+      const b = e.target.closest("button"); if (!b) return;
+      units = b.dataset.units; setSeg("seg-units", "units", units, "trainingLogUnits"); render();
+    });
+    document.getElementById("btn-refresh").addEventListener("click", () => load(true));
+
+    // apply persisted control state, then load
+    setSeg("seg-filter", "filter", filter, "trainingLogFilter");
+    setSeg("seg-units", "units", units, "trainingLogUnits");
+    load(false);
+  </script>
+</body>
+</html>

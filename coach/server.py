@@ -43,7 +43,8 @@ from . import settings_manager as sm
 from . import skills_manager as skm
 from . import memory_manager as mm
 from . import token_tracker as tt
-from .garmin_client import get_garmin_client, fetch_health_data, format_health_summary, format_trend_summary, fill_readiness_estimates
+from . import training_log as tl
+from .garmin_client import get_garmin_client, fetch_health_data, fetch_activity_history, format_health_summary, format_trend_summary, fill_readiness_estimates
 from .claude_client import ClaudeCoach
 from .paths import bundle_dir, user_data_dir
 
@@ -75,6 +76,7 @@ health_data: dict | None = None
 nutrition_data: dict = {}
 nutrition_log: dict = {}
 garmin_connected: bool = False
+garmin_client: object | None = None   # reusable authed client for on-demand fetches (e.g. Training Log)
 connection_error: str | None = None
 coach_memory: dict = {}       # loaded/updated by _connect() and memory extraction
 activity_details: dict = {}   # keyed by activity_id; loaded/updated by _connect()
@@ -115,7 +117,7 @@ async def _connect() -> None:
     Updates module-level state. Never raises — errors are stored in
     connection_error so the UI can display them gracefully.
     """
-    global coach, health_summary, health_data, nutrition_data, nutrition_log, garmin_connected, connection_error, coach_memory, activity_details
+    global coach, health_summary, health_data, nutrition_data, nutrition_log, garmin_connected, garmin_client, connection_error, coach_memory, activity_details
 
     # Keychain → env var fallback, then load .env for any remaining gaps
     cm.inject_into_env()
@@ -139,6 +141,7 @@ async def _connect() -> None:
         dates, fetch_shared = dc.plan_fetch(cache, days_back)
 
         garmin = await asyncio.to_thread(get_garmin_client, email, password)
+        garmin_client = garmin   # keep the authed client for on-demand fetches (Training Log)
         raw = await asyncio.to_thread(
             fetch_health_data, garmin, settings, dates, fetch_shared
         )
@@ -431,6 +434,72 @@ async def index(request: Request):
         "athlete_profile": settings.get("athlete_profile") or {},
         "profile_complete": _profile_complete(settings),
     })
+
+
+# ---------------------------------------------------------------------------
+# Training Log — full activity history, rendered as a Strava-style weekly grid
+# ---------------------------------------------------------------------------
+
+async def _load_activity_history(force_refresh: bool = False) -> dict:
+    """
+    Return {activities, fetched_at, stale, error} for the Training Log.
+
+    Serves the cached history from data/training_log.json unless a refresh is
+    requested or the cache is stale/missing, in which case it re-fetches the
+    full history from Garmin using the already-authenticated client (no login).
+    """
+    cache = tl.load_training_log()
+    if not force_refresh and not tl.is_stale(cache):
+        return {
+            "activities": cache["activities"],
+            "fetched_at": cache.get("fetched_at"),
+            "stale": False,
+            "error": None,
+        }
+
+    if garmin_client is None:
+        # Not connected yet — serve whatever we have (possibly empty) and flag it.
+        return {
+            "activities": (cache or {}).get("activities", []),
+            "fetched_at": (cache or {}).get("fetched_at"),
+            "stale": True,
+            "error": None if cache else "Not connected to Garmin yet.",
+        }
+
+    try:
+        activities = await asyncio.to_thread(fetch_activity_history, garmin_client)
+        saved = tl.save_training_log(activities)
+        return {
+            "activities": activities,
+            "fetched_at": saved.get("fetched_at"),
+            "stale": False,
+            "error": None,
+        }
+    except Exception as e:
+        # Fall back to cache on any fetch error so the page still renders.
+        return {
+            "activities": (cache or {}).get("activities", []),
+            "fetched_at": (cache or {}).get("fetched_at"),
+            "stale": True,
+            "error": str(e),
+        }
+
+
+@app.get("/training-log", response_class=HTMLResponse)
+async def training_log_page(request: Request):
+    if not garmin_connected:
+        return RedirectResponse("/settings")
+    settings = sm.load_settings()
+    return templates.TemplateResponse(request, "training_log.html", {
+        "request": request,
+        "athlete_profile": settings.get("athlete_profile") or {},
+    })
+
+
+@app.get("/api/training-log")
+async def api_training_log(refresh: int = 0):
+    result = await _load_activity_history(force_refresh=bool(refresh))
+    return JSONResponse(result)
 
 
 def _nutrition_status() -> dict | None:
