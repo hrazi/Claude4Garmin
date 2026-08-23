@@ -38,6 +38,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from . import activity_cache as ac
+from . import activities as av
 from . import credentials_manager as cm
 from . import data_cache as dc
 from . import nutrition_parser as np_
@@ -614,6 +615,103 @@ async def training_log_page(request: Request):
 async def api_training_log(refresh: int = 0):
     result = await _load_activity_history(force_refresh=bool(refresh))
     return JSONResponse(result)
+
+
+# ---------------------------------------------------------------------------
+# Activities — browsable history with per-activity detail
+# ---------------------------------------------------------------------------
+
+@app.get("/activities", response_class=HTMLResponse)
+async def activities_page(request: Request):
+    if not garmin_connected:
+        return RedirectResponse("/settings")
+    settings = sm.load_settings()
+    return templates.TemplateResponse(request, "activities.html", {
+        "request": request,
+        "athlete_profile": settings.get("athlete_profile") or {},
+        "units": settings.get("units", "mi"),
+    })
+
+
+@app.get("/api/activities")
+async def api_activities(group: str = "", year: str = "", search: str = "",
+                         sort: str = "date", desc: int = 1,
+                         limit: int = 50, offset: int = 0):
+    """Filtered, sorted, paged slice of the full activity history."""
+    history = await _load_activity_history()
+    acts = history.get("activities") or []
+    result = av.query(acts, group=group, year=year, search=search,
+                      sort=sort, desc=bool(desc),
+                      limit=min(max(1, limit), 200), offset=offset)
+    result["facets"] = av.facets(acts)
+    result["fetched_at"] = history.get("fetched_at")
+    # Which of these rows already have enrichment, so the list can show it
+    # without a round trip per row.
+    result["detailed"] = [a["activity_id"] for a in result["activities"]
+                          if a["activity_id"] in activity_details]
+    return JSONResponse(result)
+
+
+async def _fetch_activity_detail(activity_id: str) -> dict:
+    """
+    Pull one activity's enrichment from Garmin and cache it.
+
+    Only 30 of ~890 activities were enriched at startup, so opening an older
+    one has to fetch on demand. Each section fails independently: a missing
+    power meter should not cost you the lap splits.
+    """
+    global activity_details
+
+    if garmin_client is None:
+        raise HTTPException(503, detail="Not connected to Garmin.")
+
+    settings = sm.load_settings()
+    entry: dict = {"fetched_at": datetime.now().isoformat(timespec="seconds")}
+
+    sections = (
+        ("hr_zones",      "activity_detail_hr_zones",      garmin_client.get_activity_hr_in_timezones),
+        ("splits",        "activity_detail_splits",        garmin_client.get_activity_splits),
+        ("exercise_sets", "activity_detail_exercise_sets", garmin_client.get_activity_exercise_sets),
+        ("power_zones",   "activity_detail_power_zones",   garmin_client.get_activity_power_in_timezones),
+    )
+    for key, toggle, fn in sections:
+        if not settings.get(toggle, True):
+            continue
+        try:
+            entry[key] = await asyncio.to_thread(fn, activity_id)
+        except Exception as e:
+            entry[f"{key}_error"] = str(e)
+
+    details = ac.load_activity_details()
+    details[activity_id] = entry
+    ac.save_activity_details(details)
+    activity_details = details
+    return entry
+
+
+@app.get("/api/activities/{activity_id}")
+async def api_activity_detail(activity_id: str, fetch: int = 1):
+    """One activity with its splits, HR zones and any strength sets."""
+    history = await _load_activity_history()
+    activity = av.find(history.get("activities") or [], activity_id)
+    if activity is None:
+        raise HTTPException(404, detail="No such activity.")
+
+    detail = activity_details.get(activity_id)
+    fetched_now = False
+    if detail is None and fetch:
+        try:
+            detail = await _fetch_activity_detail(activity_id)
+            fetched_now = True
+        except HTTPException:
+            raise
+        except Exception as e:
+            detail = {"fetch_error": str(e)}
+
+    payload = av.detail_payload(activity, detail)
+    payload["fetched_now"] = fetched_now
+    payload["cached"] = activity_id in activity_details
+    return JSONResponse(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -1256,14 +1354,6 @@ async def api_extract_memory_now():
 async def api_token_usage():
     """Return aggregated token usage stats for the frontend monitor."""
     return JSONResponse(tt.get_usage_summary())
-
-
-@app.get("/api/activity-detail/{activity_id}")
-async def api_get_activity_detail(activity_id: str):
-    """Return cached enrichment data for a specific activity."""
-    if activity_id not in activity_details:
-        raise HTTPException(404, detail="Activity detail not cached yet.")
-    return JSONResponse(activity_details[activity_id])
 
 
 @app.get("/api/skills")

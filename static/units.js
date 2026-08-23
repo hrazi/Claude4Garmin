@@ -122,8 +122,16 @@
 
     paceLabel: () => `Pace (min/${current})`,
 
-    /** Kilograms -> "165 lb" or "75.0 kg", following the same preference. */
-    fmtWeight(kg, digits) {
+    /** Metres of climb -> "1,522 ft" or "464 m", following the same preference. */
+    fmtElevation(meters) {
+      if (meters == null) return '–';
+      if (current === 'mi') {
+        return Math.round(meters / 0.3048).toLocaleString() + ' ft';
+      }
+      return Math.round(meters).toLocaleString() + ' m';
+    },
+
+    /** Kilograms -> "165 lb" or "75.0 kg", following the same preference. */    fmtWeight(kg, digits) {
       if (kg == null) return '–';
       if (current === 'mi') {
         const lb = kg / 0.45359237;

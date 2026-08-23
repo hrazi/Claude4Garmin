@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Activities — Garmin Health Coach</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="/static/units.js"></script>
+  <style>
+    .a-wrap { max-width: 1080px; margin: 0 auto; padding: 24px;
+              padding-top: calc(var(--header-h,56px) + 20px); }
+    .a-head { display:flex; align-items:baseline; justify-content:space-between;
+              gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+    .a-head h2 { margin:0; font-size:20px; color:#2b2f36; }
+    .a-count { font-size:13px; color:#8a8f98; }
+
+    .a-bar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+    .a-chip { border:1px solid #d7dae0; background:#fff; color:#4a4f57; border-radius:999px;
+              padding:5px 13px; font-size:13px; cursor:pointer; }
+    .a-chip.on { background:#2b2f36; color:#fff; border-color:transparent; }
+    .a-bar select, .a-bar input {
+      padding:6px 10px; border:1px solid #d7dae0; border-radius:8px; font-size:13px;
+      background:#fff; color:#2b2f36; }
+    .a-bar input { min-width:180px; }
+    .u-seg { display:inline-flex; border:1px solid #d7dae0; border-radius:8px; overflow:hidden; flex:none; }
+    .u-seg button { border:0; background:#fff; color:#4a4f57; padding:6px 13px; font-size:12.5px; cursor:pointer; }
+    .u-seg button + button { border-left:1px solid #d7dae0; }
+    .u-seg button.active { background:#2b2f36; color:#fff; }
+
+    .a-card { background:#fff; border:1px solid #ececf0; border-radius:12px;
+              overflow:hidden; }
+    .a-row { display:grid; grid-template-columns: 92px 30px 1fr 92px 84px 96px 66px;
+             gap:10px; align-items:center; padding:11px 16px;
+             border-bottom:1px solid #f2f3f5; cursor:pointer; font-size:13px; }
+    .a-row:last-child { border-bottom:0; }
+    .a-row:hover { background:#f8f9fb; }
+    .a-row.head { background:#fbfbfc; color:#8a8f98; font-size:11px; cursor:default;
+                  text-transform:uppercase; letter-spacing:.04em; font-weight:600; }
+    .a-row.head:hover { background:#fbfbfc; }
+    .a-row.head span { cursor:pointer; }
+    .a-row.head span.on { color:#2b2f36; }
+    .a-name { color:#2b2f36; font-weight:600; overflow:hidden; text-overflow:ellipsis;
+              white-space:nowrap; }
+    .a-sub { color:#9aa0a8; font-weight:400; font-size:11.5px; }
+    .a-num { text-align:right; color:#4a4f57; font-variant-numeric:tabular-nums; }
+    .a-dim { color:#c0c4cb; }
+    .a-flag { color:#c98a2e; cursor:help; }
+    .a-dot { width:6px; height:6px; border-radius:50%; background:#7cb342;
+             display:inline-block; margin-left:5px; vertical-align:middle; }
+
+    .a-more { text-align:center; padding:14px; }
+    .a-more button { padding:8px 18px; border-radius:8px; border:1px solid #d7dae0;
+                     background:#fff; cursor:pointer; font-size:13px; }
+    .a-empty { padding:40px; text-align:center; color:#9aa0a8; font-size:14px; }
+
+    /* detail */
+    .a-back { border:0; background:none; color:#5566d8; cursor:pointer; font-size:13px;
+              padding:0; margin-bottom:12px; }
+    .a-dcard { background:#fff; border:1px solid #ececf0; border-radius:12px;
+               padding:18px; margin-bottom:14px; }
+    .a-dcard h3 { margin:0 0 3px; font-size:16px; color:#2b2f36; }
+    .a-dsub { font-size:12.5px; color:#8a8f98; margin-bottom:14px; }
+    .a-stats { display:flex; flex-wrap:wrap; gap:26px; }
+    .a-stat .k { font-size:11px; color:#9aa0a8; text-transform:uppercase; letter-spacing:.04em; }
+    .a-stat .v { font-size:19px; font-weight:700; color:#2b2f36; font-variant-numeric:tabular-nums; }
+
+    .z-row { display:grid; grid-template-columns:52px 1fr 118px; gap:10px;
+             align-items:center; margin-bottom:7px; font-size:12.5px; }
+    .z-bar { height:16px; border-radius:4px; background:#f0f1f3; overflow:hidden; }
+    .z-fill { height:100%; }
+    .z-meta { text-align:right; color:#8a8f98; font-variant-numeric:tabular-nums; white-space:nowrap; }
+
+    table.a-laps { width:100%; border-collapse:collapse; font-size:12.5px; }
+    table.a-laps th { text-align:right; color:#9aa0a8; font-weight:600; font-size:11px;
+                      text-transform:uppercase; letter-spacing:.04em;
+                      padding:6px 8px; border-bottom:1px solid #ececf0; }
+    table.a-laps th:first-child, table.a-laps td:first-child { text-align:left; }
+    table.a-laps td { text-align:right; padding:7px 8px; border-bottom:1px solid #f5f6f7;
+                      color:#4a4f57; font-variant-numeric:tabular-nums; }
+    table.a-laps tr:last-child td { border-bottom:0; }
+
+    .a-note { font-size:12px; color:#9aa0a8; margin-top:10px; }
+    .a-warn { background:#fdf6ee; border:1px solid #f0dcc2; border-radius:9px;
+              padding:11px 13px; font-size:12.5px; color:#8a6d3b; margin-bottom:14px; }
+    .a-load { padding:36px; text-align:center; color:#9aa0a8; font-size:14px; }
+    .chart-box { position:relative; height:230px; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-left"><span class="header-icon">📋</span><span class="header-title">Activities</span></div>
+    <div class="header-right">
+      <a href="/" class="btn-ghost">💬 <span class="btn-text">Coach</span></a>
+      <a href="/training-log" class="btn-ghost">📖 <span class="btn-text">Training Log</span></a>
+      <a href="/charts" class="btn-ghost">📈 <span class="btn-text">Charts</span></a>
+      <a href="/analytics" class="btn-ghost">🔬 <span class="btn-text">Analytics</span></a>
+      <a href="/daily" class="btn-ghost">📅 <span class="btn-text">Daily</span></a>
+      <a href="/settings" class="btn-ghost">⚙ <span class="btn-text">Settings</span></a>
+    </div>
+  </header>
+
+  <div class="a-wrap" id="a-root">
+    <div class="a-load">Loading your activities…</div>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g,
+      c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+
+    const PAGE = 50;
+    let facets = null, rows = [], total = 0, offset = 0, loading = false;
+    let group = "all", year = "all", search = "", sort = "date", desc = true;
+    let detailId = new URLSearchParams(location.search).get("id");
+
+    // ── formatting ────────────────────────────────────────────────────
+    function fmtDur(s) {
+      if (!s) return "–";
+      s = Math.round(s);
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+      return h ? `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`
+               : `${m}:${String(sec).padStart(2,"0")}`;
+    }
+    function fmtDate(d) {
+      if (!d) return "–";
+      const [y, m, day] = d.split("-").map(Number);
+      return new Date(y, m - 1, day).toLocaleDateString(undefined,
+        { month: "short", day: "numeric", year: "2-digit" });
+    }
+    function fmtSpeed(kph) {
+      if (kph == null) return "–";
+      const v = Units.get() === "mi" ? kph / 1.609344 : kph;
+      return v.toFixed(1) + " " + (Units.get() === "mi" ? "mph" : "km/h");
+    }
+    /** Pace for distance sports, speed for wheels, per-100m for swims. */
+    function fmtRate(a) {
+      if (a.readout === "none") return "–";
+      if (a.readout === "speed") return fmtSpeed(a.speed_kph);
+      if (a.pace_min_per_km == null) return "–";
+      if (a.readout === "swim_pace") return fmtPer100(a.pace_min_per_km);
+      return Units.fmtPace(a.pace_min_per_km);
+    }
+    /** Minutes per km -> "2:02 /100m", the only swim pace anyone uses. */
+    function fmtPer100(minPerKm) {
+      if (minPerKm == null) return "–";
+      const v = minPerKm / 10, m = Math.floor(v);
+      let s = Math.round((v - m) * 60), mm = m;
+      if (s === 60) { s = 0; mm += 1; }
+      return `${mm}:${String(s).padStart(2, "0")} /100m`;
+    }
+    /**
+     * Swims are recorded and read in metres, so converting a 1 500 m session
+     * into "0.9 mi" would be worse than useless. Everything else follows the
+     * athlete's km/mi preference.
+     */
+    function fmtDist(a, meters, digits) {
+      if (meters == null) return "–";
+      if (a.readout === "swim_pace") return Math.round(meters) + " m";
+      return Units.fmtDistance(meters, digits);
+    }
+    const rateLabel = a => a.readout === "speed" ? "Avg speed"
+                         : a.readout === "swim_pace" ? "Avg /100m" : "Avg pace";
+
+    // ── list ──────────────────────────────────────────────────────────
+    function chipBar() {
+      const gs = [{ key:"all", label:"All", icon:"", count: facets.totalAll }]
+        .concat(facets.groups.map(g => ({ ...g })));
+      const chips = gs.map(g =>
+        `<button class="a-chip ${g.key === group ? "on" : ""}" data-g="${g.key}">
+           ${g.icon || ""} ${esc(g.label)} <span style="opacity:.55">${g.count}</span>
+         </button>`).join("");
+      const years = ['<option value="all">All years</option>'].concat(
+        facets.years.map(y =>
+          `<option value="${y.year}" ${y.year === year ? "selected" : ""}>${y.year} (${y.count})</option>`)
+      ).join("");
+      return `<div class="a-bar">
+        ${chips}
+        <select id="a-year">${years}</select>
+        <input id="a-search" type="search" placeholder="Search name or type…" value="${esc(search)}" />
+        <span id="a-units" style="margin-left:auto"></span>
+      </div>`;
+    }
+
+    const COLS = [
+      { key:"date",     label:"Date" },
+      { key:"",         label:"" },
+      { key:"",         label:"Activity" },
+      { key:"distance", label:"Distance" },
+      { key:"duration", label:"Time" },
+      { key:"pace",     label:"Pace" },
+      { key:"hr",       label:"Avg HR" },
+    ];
+
+    function rowHtml(a, hasDetail) {
+      const rate = fmtRate(a);
+      const flag = a.suspect
+        ? ` <span class="a-flag" title="Garmin's distance and time for this activity are not consistent with each other, so this figure is unreliable.">⚠</span>`
+        : "";
+      return `<div class="a-row" data-id="${esc(a.activity_id)}">
+        <div class="a-dim">${fmtDate(a.date)}</div>
+        <div style="font-size:15px">${a.icon}</div>
+        <div class="a-name">${esc(a.name)}${hasDetail ? '<span class="a-dot" title="Detail already downloaded"></span>' : ""}
+          <div class="a-sub">${esc(a.type_label)}</div></div>
+        <div class="a-num">${fmtDist(a, a.distance_m)}</div>
+        <div class="a-num">${fmtDur(a.duration_s)}</div>
+        <div class="a-num">${rate}${flag}</div>
+        <div class="a-num">${a.avg_hr ? Math.round(a.avg_hr) : "–"}</div>
+      </div>`;
+    }
+
+    function renderList() {
+      const header = `<div class="a-row head">` + COLS.map(c =>
+        c.key ? `<span data-sort="${c.key}" class="${sort === c.key ? "on" : ""}">${c.label}${
+                   sort === c.key ? (desc ? " ↓" : " ↑") : ""}</span>`
+              : `<span style="cursor:default">${c.label}</span>`).join("") + `</div>`;
+
+      const body = rows.length
+        ? rows.map(a => rowHtml(a, detailed.has(a.activity_id))).join("")
+        : `<div class="a-empty">No activities match these filters.</div>`;
+
+      const more = rows.length < total
+        ? `<div class="a-more"><button id="a-more">Show more (${total - rows.length} left)</button></div>`
+        : "";
+
+      $("a-root").innerHTML = `
+        <div class="a-head">
+          <h2>Activities</h2>
+          <div class="a-count">${total} activit${total === 1 ? "y" : "ies"}${
+            rows.length < total ? ` · showing ${rows.length}` : ""}</div>
+        </div>
+        ${chipBar()}
+        <div class="a-card">${header}${body}</div>
+        ${more}`;
+
+      $("a-root").querySelectorAll(".a-chip").forEach(b =>
+        b.onclick = () => { group = b.dataset.g; reload(); });
+      // One segment element, reused across renders — Units.segment() registers a
+      // listener each call, so building a fresh one per render would leak them.
+      unitSeg = unitSeg || Units.segment();
+      $("a-units").appendChild(unitSeg);
+      $("a-year").onchange = e => { year = e.target.value; reload(); };
+      let timer = null;
+      $("a-search").oninput = e => {
+        clearTimeout(timer);
+        const v = e.target.value;
+        timer = setTimeout(() => { search = v; reload(true); }, 250);
+      };
+      $("a-root").querySelectorAll("[data-sort]").forEach(s =>
+        s.onclick = () => {
+          if (sort === s.dataset.sort) desc = !desc;
+          else { sort = s.dataset.sort; desc = true; }
+          reload();
+        });
+      const mb = $("a-more");
+      if (mb) mb.onclick = () => loadPage(false);
+      $("a-root").querySelectorAll(".a-row[data-id]").forEach(r =>
+        r.onclick = () => openDetail(r.dataset.id));
+    }
+
+    let detailed = new Set();
+    let unitSeg = null;
+
+    async function loadPage(reset) {
+      if (loading) return;
+      loading = true;
+      if (reset) { offset = 0; rows = []; }
+      const p = new URLSearchParams({
+        group, year, search, sort, desc: desc ? 1 : 0,
+        limit: PAGE, offset: String(offset),
+      });
+      const r = await fetch("/api/activities?" + p).then(r => r.json());
+      facets = r.facets;
+      facets.totalAll = facets.groups.reduce((n, g) => n + g.count, 0);
+      total = r.total;
+      rows = rows.concat(r.activities);
+      (r.detailed || []).forEach(id => detailed.add(id));
+      offset += r.activities.length;
+      loading = false;
+      renderList();
+      // Keep focus in the search box across a debounced reload.
+      if (search && $("a-search")) {
+        const el = $("a-search");
+        el.focus(); el.setSelectionRange(el.value.length, el.value.length);
+      }
+    }
+
+    const reload = keepSearch => loadPage(true);
+
+    // ── detail ────────────────────────────────────────────────────────
+    const ZONE_COLORS = ["#9aa7d8", "#7cb342", "#f5b942", "#ef8b4b", "#d9534f"];
+
+    function zoneBlock(title, zones, unitLabel) {
+      if (!zones.length) return "";
+      const max = Math.max(...zones.map(z => z.pct), 1);
+      const rowsHtml = zones.map(z => `
+        <div class="z-row">
+          <div>Zone ${z.zone}</div>
+          <div class="z-bar"><div class="z-fill" style="width:${(z.pct / max * 100).toFixed(1)}%;
+               background:${ZONE_COLORS[(z.zone - 1) % 5]}"></div></div>
+          <div class="z-meta">${fmtDur(z.seconds)} · ${z.pct}%</div>
+        </div>`).join("");
+      const bounds = zones.filter(z => z.low_bpm != null || z.low_watts != null);
+      const note = bounds.length
+        ? `<div class="a-note">Zone floors: ${bounds.map(z =>
+            `Z${z.zone} ${Math.round(z.low_bpm ?? z.low_watts)}`).join(" · ")} ${unitLabel}</div>`
+        : "";
+      return `<div class="a-dcard"><h3>${title}</h3>
+        <div class="a-dsub">Bars are scaled to the busiest zone.</div>
+        ${rowsHtml}${note}</div>`;
+    }
+
+    function lapsBlock(laps, readout) {
+      if (!laps.length) return "";
+      const rateHead = readout === "speed" ? "Speed" : readout === "swim_pace" ? "/100m" : "Pace";
+      const body = laps.map(l => `
+        <tr>
+          <td>${l.lap}</td>
+          <td>${fmtDist({ readout }, l.distance_m, 2)}</td>
+          <td>${fmtDur(l.duration_s)}</td>
+          <td>${fmtRate({ readout, speed_kph: l.speed_kph, pace_min_per_km: l.pace_min_per_km })}</td>
+          <td>${l.avg_hr ? Math.round(l.avg_hr) : "–"}</td>
+          <td>${l.max_hr ? Math.round(l.max_hr) : "–"}</td>
+          <td>${l.cadence ? Math.round(l.cadence) : "–"}</td>
+        </tr>`).join("");
+      return `<div class="a-dcard"><h3>Splits</h3>
+        <div class="a-dsub">${laps.length} lap${laps.length === 1 ? "" : "s"}</div>
+        <div class="chart-box"><canvas id="lap-chart"></canvas></div>
+        <table class="a-laps" style="margin-top:16px">
+          <tr><th>Lap</th><th>Distance</th><th>Time</th><th>${rateHead}</th>
+              <th>Avg HR</th><th>Max HR</th><th>Cadence</th></tr>
+          ${body}
+        </table></div>`;
+    }
+
+    function setsBlock(sets) {
+      if (!sets.length) return "";
+      const body = sets.map(s => `
+        <tr><td>${esc(s.exercise)}</td>
+            <td>${s.reps ? Math.round(s.reps) : "–"}</td>
+            <td>${s.weight_kg ? Units.fmtWeight(s.weight_kg, 1) : "–"}</td>
+            <td>${fmtDur(s.duration_s)}</td></tr>`).join("");
+      return `<div class="a-dcard"><h3>Sets</h3>
+        <table class="a-laps">
+          <tr><th>Exercise</th><th>Reps</th><th>Weight</th><th>Time</th></tr>
+          ${body}</table></div>`;
+    }
+
+    let lapChart = null;
+
+    function drawLapChart(laps, readout) {
+      const el = $("lap-chart");
+      if (!el || laps.length < 2) { if (el) el.parentElement.remove(); return; }
+      const vals = laps.map(l => readout === "speed"
+        ? (l.speed_kph == null ? null : (Units.get() === "mi" ? l.speed_kph / 1.609344 : l.speed_kph))
+        : l.pace_min_per_km == null ? null
+        : readout === "swim_pace" ? l.pace_min_per_km / 10
+        : Units.pace(l.pace_min_per_km));
+      if (lapChart) lapChart.destroy();
+      lapChart = new Chart(el, {
+        type: "bar",
+        data: {
+          labels: laps.map(l => "L" + l.lap),
+          datasets: [{
+            label: readout === "speed" ? "Speed" : "Pace",
+            data: vals,
+            backgroundColor: "#5566d8",
+            borderRadius: 3,
+          }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: c => fmtRate({
+              readout,
+              speed_kph: laps[c.dataIndex].speed_kph,
+              pace_min_per_km: laps[c.dataIndex].pace_min_per_km,
+            }) } },
+          },
+          scales: {
+            // Faster pace is a smaller number, so flip the axis to keep
+            // "higher bar = better" true for both readouts.
+            y: { reverse: readout !== "speed", beginAtZero: false,
+                 title: { display: true,
+                          text: readout === "speed"
+                            ? (Units.get() === "mi" ? "mph" : "km/h")
+                            : readout === "swim_pace" ? "min/100m"
+                            : `min/${Units.get()}` } },
+            x: { grid: { display: false } },
+          },
+        },
+      });
+    }
+
+    async function openDetail(id) {
+      detailId = id;
+      history.pushState({ id }, "", "?id=" + encodeURIComponent(id));
+      $("a-root").innerHTML = `<div class="a-load">Loading activity…<br>
+        <span style="font-size:12px">Fetching splits and heart-rate zones from Garmin if this is the first time.</span></div>`;
+
+      let d;
+      try {
+        d = await fetch("/api/activities/" + encodeURIComponent(id)).then(r => {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        });
+      } catch (e) {
+        $("a-root").innerHTML = `<button class="a-back" id="a-back">← All activities</button>
+          <div class="a-dcard"><div class="a-empty">Could not load this activity (${esc(e.message)}).</div></div>`;
+        $("a-back").onclick = closeDetail;
+        return;
+      }
+
+      const a = d.summary;
+      const stat = (k, v) => `<div class="a-stat"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+      const stats = [
+        a.distance_m ? stat("Distance", fmtDist(a, a.distance_m, 2)) : "",
+        stat("Time", fmtDur(a.duration_s)),
+        a.moving_s ? stat("Moving", fmtDur(a.moving_s)) : "",
+        a.readout !== "none" ? stat(rateLabel(a), fmtRate(a)) : "",
+        a.avg_hr ? stat("Avg HR", Math.round(a.avg_hr)) : "",
+        a.max_hr ? stat("Max HR", Math.round(a.max_hr)) : "",
+        a.calories ? stat("Calories", Math.round(a.calories)) : "",
+        a.elevation_gain ? stat("Elev gain", Units.fmtElevation(a.elevation_gain)) : "",
+      ].join("");
+
+      const warn = a.suspect
+        ? `<div class="a-warn"><strong>Check this one.</strong> Garmin recorded
+             ${fmtDist(a, a.distance_m, 2)} in ${fmtDur(a.timed_s)}, which works out at
+             ${fmtRate(a)}. Those two numbers cannot both be right, so treat the
+             pace and any derived figure here as unreliable.</div>`
+        : "";
+
+      const missing = !d.has_detail
+        ? `<div class="a-dcard"><div class="a-empty">
+             ${d.errors.length || d.summary == null
+               ? "Garmin did not return detail for this activity."
+               : "No splits or heart-rate zones were recorded for this activity."}
+           </div></div>`
+        : "";
+
+      $("a-root").innerHTML = `
+        <button class="a-back" id="a-back">← All activities</button>
+        ${warn}
+        <div class="a-dcard">
+          <h3>${a.icon} ${esc(a.name)}</h3>
+          <div class="a-dsub">${esc(a.type_label)} · ${fmtDate(a.date)}${
+            a.start_time ? " · " + esc(a.start_time.slice(11, 16)) : ""}</div>
+          <div class="a-stats">${stats}</div>
+        </div>
+        ${zoneBlock("Heart-rate zones", d.hr_zones, "bpm")}
+        ${zoneBlock("Power zones", d.power_zones, "W")}
+        ${lapsBlock(d.splits, a.readout)}
+        ${setsBlock(d.exercise_sets)}
+        ${missing}
+        ${d.fetched_at ? `<div class="a-note">Detail downloaded ${esc(d.fetched_at.replace("T", " "))}.</div>` : ""}`;
+
+      $("a-back").onclick = closeDetail;
+      drawLapChart(d.splits, a.readout);
+      if (d.fetched_now) detailed.add(id);
+    }
+
+    function closeDetail() {
+      detailId = null;
+      history.pushState({}, "", location.pathname);
+      if (lapChart) { lapChart.destroy(); lapChart = null; }
+      if (rows.length) renderList(); else loadPage(true);
+    }
+
+    window.onpopstate = () => {
+      const id = new URLSearchParams(location.search).get("id");
+      if (id) openDetail(id); else closeDetail();
+    };
+
+    Units.onChange(() => { if (detailId) openDetail(detailId); else if (rows.length) renderList(); });
+
+    (async () => {
+      await loadPage(true);
+      if (detailId) openDetail(detailId);
+    })();
+  </script>
+</body>
+</html>
