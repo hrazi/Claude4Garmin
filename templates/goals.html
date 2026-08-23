@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Goals — Garmin Health Coach</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    .g-wrap { max-width: 900px; margin: 0 auto; padding: 24px; padding-top: calc(var(--header-h,56px) + 20px); }
+    .g-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; gap:12px; flex-wrap:wrap; }
+    .g-head h2 { margin:0; font-size:20px; color:#2b2f36; }
+    .g-add { border:1px solid #d7dae0; background:#fff; color:#2b2f36; border-radius:8px; padding:8px 14px; font-size:14px; cursor:pointer; }
+    .g-add:hover { background:#f4f5f7; }
+    .g-list { display:flex; flex-direction:column; gap:12px; }
+    .g-card { background:#fff; border:1px solid #ececf0; border-radius:12px; padding:16px 18px; }
+    .g-top { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+    .g-label { font-size:15px; font-weight:700; color:#2b2f36; }
+    .g-meta { font-size:12px; color:#9aa0a8; }
+    .g-del { border:0; background:none; color:#b4442f; cursor:pointer; font-size:13px; }
+    .g-bar { height:10px; background:#eef0f3; border-radius:999px; overflow:hidden; margin:12px 0 6px; }
+    .g-fill { height:100%; background:#5566d8; border-radius:999px; transition:width .3s; }
+    .g-fill.done { background:#2e9e5b; }
+    .g-nums { font-size:13px; color:#4a4f57; display:flex; justify-content:space-between; }
+    .g-empty { text-align:center; color:#8a8f98; padding:50px 20px; }
+
+    .g-modal { position:fixed; inset:0; background:rgba(20,22,26,.45); display:none; align-items:center; justify-content:center; z-index:200; }
+    .g-modal.open { display:flex; }
+    .g-form { background:#fff; border-radius:14px; padding:22px; width:min(460px,92vw); }
+    .g-form h3 { margin:0 0 14px; font-size:17px; }
+    .g-form label { display:block; font-size:12px; color:#6b7078; margin:10px 0 4px; }
+    .g-form input, .g-form select { width:100%; padding:9px 10px; border:1px solid #d7dae0; border-radius:8px; font-size:14px; box-sizing:border-box; }
+    .g-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
+    .g-actions button { padding:8px 16px; border-radius:8px; font-size:14px; cursor:pointer; border:1px solid #d7dae0; background:#fff; }
+    .g-actions .primary { background:#2b2f36; color:#fff; border-color:transparent; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-left"><span class="header-icon">🎯</span><span class="header-title">Goals</span></div>
+    <div class="header-right">
+      <a href="/" class="btn-ghost">💬 <span class="btn-text">Coach</span></a>
+      <a href="/charts" class="btn-ghost">📈 <span class="btn-text">Charts</span></a>
+      <a href="/review" class="btn-ghost">📝 <span class="btn-text">Review</span></a>
+      <a href="/settings" class="btn-ghost">⚙ <span class="btn-text">Settings</span></a>
+    </div>
+  </header>
+
+  <div class="g-wrap">
+    <div class="g-head">
+      <h2>Your goals</h2>
+      <button class="g-add" id="g-add">+ Add goal</button>
+    </div>
+    <div class="g-list" id="g-list"><div class="g-empty">Loading…</div></div>
+  </div>
+
+  <div class="g-modal" id="g-modal">
+    <div class="g-form">
+      <h3>New goal</h3>
+      <label>Type</label>
+      <select id="f-type">
+        <option value="weekly_distance">Weekly running distance</option>
+        <option value="weight">Body weight</option>
+        <option value="steps">Daily steps</option>
+        <option value="sleep">Sleep hours / night</option>
+        <option value="rhr">Resting heart rate</option>
+        <option value="race">Race / event</option>
+      </select>
+      <label>Description</label>
+      <input id="f-label" placeholder="e.g. Build to 50 km/week" />
+      <label>Target value</label>
+      <input id="f-target" type="number" step="any" placeholder="e.g. 50" />
+      <label>Unit</label>
+      <input id="f-unit" placeholder="km / kg / steps / h / bpm" />
+      <label>Target date (optional)</label>
+      <input id="f-date" type="date" />
+      <div class="g-actions">
+        <button id="f-cancel">Cancel</button>
+        <button class="primary" id="f-save">Save goal</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const UNIT_BY_TYPE = { weekly_distance:"km", weight:"kg", steps:"steps", sleep:"h", rhr:"bpm", race:"" };
+    const DIR_BY_TYPE  = { weekly_distance:"increase", weight:"decrease", steps:"increase", sleep:"increase", rhr:"decrease", race:"hit" };
+
+    function esc(s){return (s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+
+    async function loadGoals() {
+      const list = document.getElementById("g-list");
+      const { goals } = await (await fetch("/api/goals")).json();
+      if (!goals.length) { list.innerHTML = '<div class="g-empty">No goals yet. Add one to make the coach goal-aware.</div>'; return; }
+      list.innerHTML = goals.map(g => {
+        const pct = g.percent == null ? null : g.percent;
+        const cur = g.current == null ? "—" : (Math.round(g.current*10)/10) + (g.unit||"");
+        const tgt = g.target == null ? "" : (g.target) + (g.unit||"");
+        const days = g.days_left == null ? "" : (g.days_left >= 0 ? g.days_left+" days left" : Math.abs(g.days_left)+" days ago");
+        const done = g.status === "achieved";
+        return '<div class="g-card">'+
+          '<div class="g-top"><span class="g-label">'+esc(g.label||g.type)+'</span>'+
+          '<button class="g-del" data-id="'+g.id+'">Delete</button></div>'+
+          '<div class="g-meta">'+esc(g.type.replace(/_/g," "))+(days?' · '+days:'')+'</div>'+
+          (pct==null?'':'<div class="g-bar"><div class="g-fill'+(done?' done':'')+'" style="width:'+Math.min(100,pct)+'%"></div></div>')+
+          '<div class="g-nums"><span>Current: <b>'+cur+'</b></span>'+
+          (tgt?'<span>Target: <b>'+tgt+'</b></span>':'')+
+          (pct==null?'':'<span>'+pct+'%'+(done?' ✓':'')+'</span>')+'</div></div>';
+      }).join("");
+      list.querySelectorAll(".g-del").forEach(b => b.onclick = async () => {
+        await fetch("/api/goals/"+b.dataset.id, { method:"DELETE" }); loadGoals();
+      });
+    }
+
+    const modal = document.getElementById("g-modal");
+    document.getElementById("g-add").onclick = () => modal.classList.add("open");
+    document.getElementById("f-cancel").onclick = () => modal.classList.remove("open");
+    document.getElementById("f-type").onchange = e => {
+      document.getElementById("f-unit").value = UNIT_BY_TYPE[e.target.value] || "";
+    };
+    document.getElementById("f-unit").value = UNIT_BY_TYPE["weekly_distance"];
+    document.getElementById("f-save").onclick = async () => {
+      const type = document.getElementById("f-type").value;
+      const body = {
+        type,
+        label: document.getElementById("f-label").value,
+        target: document.getElementById("f-target").value,
+        unit: document.getElementById("f-unit").value,
+        date: document.getElementById("f-date").value,
+        direction: DIR_BY_TYPE[type],
+      };
+      await fetch("/api/goals", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
+      modal.classList.remove("open");
+      document.getElementById("f-label").value = ""; document.getElementById("f-target").value = ""; document.getElementById("f-date").value = "";
+      loadGoals();
+    };
+    loadGoals();
+  </script>
+</body>
+</html>

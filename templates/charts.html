@@ -35,6 +35,8 @@
     <div class="header-right">
       <a href="/" class="btn-ghost">💬 <span class="btn-text">Coach</span></a>
       <a href="/training-log" class="btn-ghost">📖 <span class="btn-text">Training Log</span></a>
+      <a href="/goals" class="btn-ghost">🎯 <span class="btn-text">Goals</span></a>
+      <a href="/review" class="btn-ghost">📝 <span class="btn-text">Review</span></a>
       <a href="/settings" class="btn-ghost">⚙ <span class="btn-text">Settings</span></a>
     </div>
   </header>
@@ -42,11 +44,19 @@
   <div class="ch-wrap">
     <div class="ch-toolbar">
       <div class="ch-metrics" id="ch-metrics"></div>
-      <div class="ch-seg" id="ch-range" title="Time range">
-        <button data-days="14">14d</button>
-        <button data-days="30" class="active">30d</button>
-        <button data-days="90">90d</button>
-        <button data-days="0">All</button>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <label class="ch-chip" style="cursor:pointer">
+          <input type="checkbox" id="ch-roll" style="margin:0"> 7-day avg
+        </label>
+        <label class="ch-chip" style="cursor:pointer">
+          <input type="checkbox" id="ch-acts" style="margin:0"> Activity days
+        </label>
+        <div class="ch-seg" id="ch-range" title="Time range">
+          <button data-days="14">14d</button>
+          <button data-days="30" class="active">30d</button>
+          <button data-days="90">90d</button>
+          <button data-days="0">All</button>
+        </div>
       </div>
     </div>
 
@@ -59,15 +69,22 @@
 
   <script>
     const METRICS = [
-      { key: "steps",       label: "Steps",              color: "#5566d8", axis: "y1" },
-      { key: "stress",      label: "Stress",             color: "#e2622c", axis: "y" },
-      { key: "resting_hr",  label: "Resting HR",         color: "#26a69a", axis: "y" },
-      { key: "readiness",   label: "Training Readiness", color: "#8e7cc3", axis: "y" },
+      { key: "steps",        label: "Steps",              color: "#5566d8", axis: "y1" },
+      { key: "stress",       label: "Stress",             color: "#e2622c", axis: "y" },
+      { key: "resting_hr",   label: "Resting HR",         color: "#26a69a", axis: "y" },
+      { key: "readiness",    label: "Training Readiness", color: "#8e7cc3", axis: "y" },
+      { key: "sleep_score",  label: "Sleep Score",        color: "#3f8fd0", axis: "y" },
+      { key: "sleep_hours",  label: "Sleep Hours",        color: "#00acc1", axis: "y" },
+      { key: "hrv",          label: "HRV",                color: "#d81b60", axis: "y" },
+      { key: "body_battery", label: "Body Battery",       color: "#7cb342", axis: "y" },
+      { key: "weight",       label: "Weight",             color: "#8d6e63", axis: "y" },
     ];
     let DATA = null, chart = null;
     let range = parseInt(localStorage.getItem("chartsRange") || "30", 10);
     let active = JSON.parse(localStorage.getItem("chartsMetrics") || "null")
-              || METRICS.map(m => m.key);
+              || ["steps", "resting_hr", "readiness"];
+    let useRoll = localStorage.getItem("chartsRoll") === "1";
+    let showActs = localStorage.getItem("chartsActs") === "1";
 
     function slice(arr, n) { return n && arr.length > n ? arr.slice(-n) : arr; }
 
@@ -75,17 +92,36 @@
       if (!DATA) return;
       const dates = slice(DATA.dates, range);
       const n = dates.length;
-      const datasets = METRICS.filter(m => active.includes(m.key)).map(m => ({
-        label: m.label,
-        data: slice(DATA[m.key], range),
-        borderColor: m.color,
-        backgroundColor: m.color + "22",
-        yAxisID: m.axis,
-        spanGaps: true,
-        tension: 0.3,
-        pointRadius: n > 45 ? 0 : 2,
-        borderWidth: 2,
-      }));
+      const roll = DATA.rolling || {};
+      const datasets = METRICS.filter(m => active.includes(m.key)).map(m => {
+        const raw = slice(DATA[m.key], range);
+        const src = (useRoll && roll[m.key]) ? slice(roll[m.key], range) : raw;
+        return {
+          label: m.label + (useRoll ? " (7d avg)" : ""),
+          data: src,
+          borderColor: m.color,
+          backgroundColor: m.color + "22",
+          yAxisID: m.axis,
+          spanGaps: true,
+          tension: 0.3,
+          pointRadius: n > 45 ? 0 : 2,
+          borderWidth: 2,
+        };
+      });
+      // Activity-day markers as faint vertical bars on the steps axis
+      if (showActs && DATA.activity_days) {
+        const set = new Set(DATA.activity_days);
+        datasets.push({
+          type: "bar",
+          label: "Activity",
+          data: dates.map(d => set.has(d) ? 1 : null),
+          backgroundColor: "rgba(226,98,44,0.18)",
+          yAxisID: "yAct",
+          barThickness: 6,
+          order: 99,
+        });
+      }
+      const needSteps = active.includes("steps");
       const cfg = {
         type: "line",
         data: { labels: dates, datasets },
@@ -95,9 +131,10 @@
           plugins: { legend: { display: false } },
           scales: {
             x: { grid: { display: false }, ticks: { maxTicksLimit: 10, autoSkip: true } },
-            y:  { position: "left",  title: { display: true, text: "Stress · RHR · Readiness" } },
-            y1: { position: "right", title: { display: true, text: "Steps" },
-                  grid: { drawOnChartArea: false }, beginAtZero: true },
+            y:  { position: "left" },
+            y1: { position: "right", title: { display: needSteps, text: "Steps" },
+                  display: needSteps, grid: { drawOnChartArea: false }, beginAtZero: true },
+            yAct: { display: false, min: 0, max: 1 },
           },
         },
       };
@@ -134,6 +171,12 @@
         x.classList.toggle("active", x === b));
       render();
     });
+    document.getElementById("ch-roll").addEventListener("change", e => {
+      useRoll = e.target.checked; localStorage.setItem("chartsRoll", useRoll ? "1" : "0"); render();
+    });
+    document.getElementById("ch-acts").addEventListener("change", e => {
+      showActs = e.target.checked; localStorage.setItem("chartsActs", showActs ? "1" : "0"); render();
+    });
 
     (async function () {
       try {
@@ -141,6 +184,8 @@
         document.getElementById("ch-loading").style.display = "none";
         document.querySelectorAll("#ch-range button").forEach(x =>
           x.classList.toggle("active", parseInt(x.dataset.days, 10) === range));
+        document.getElementById("ch-roll").checked = useRoll;
+        document.getElementById("ch-acts").checked = showActs;
         buildChips();
         if (!DATA.dates.length) {
           document.getElementById("ch-loading").style.display = "";

@@ -762,6 +762,7 @@ def format_health_summary(
     nutrition_log: dict | None = None,
     memory_notes: str = "",
     trend_summary: str = "",
+    extra_notes: str = "",
 ) -> str:
     """
     Convert raw Garmin data into a clean, readable text block.
@@ -774,6 +775,7 @@ def format_health_summary(
 
     Optional memory_notes and trend_summary are injected at the top when provided,
     giving Claude accumulated coaching memory and pre-computed 90-day trend data.
+    extra_notes (active alerts + goal progress) is injected right after them.
     """
     s = settings or {}
 
@@ -787,6 +789,11 @@ def format_health_summary(
     # ── Health Trends (pre-computed from 90-day archive) ─────────────────────
     if trend_summary and trend_summary.strip():
         lines.append(trend_summary.strip())
+        lines.append("")
+
+    # ── Active alerts + goal progress (proactive coaching context) ───────────
+    if extra_notes and extra_notes.strip():
+        lines.append(extra_notes.strip())
         lines.append("")
 
     # ── Athlete Profile ───────────────────────────────────────────────────────

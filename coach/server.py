@@ -44,6 +44,9 @@ from . import skills_manager as skm
 from . import memory_manager as mm
 from . import token_tracker as tt
 from . import training_log as tl
+from . import insights as ins
+from . import goals as gl
+from . import weekly_review as wr
 from .garmin_client import get_garmin_client, fetch_health_data, fetch_activity_history, format_health_summary, format_trend_summary, fill_readiness_estimates
 from .claude_client import ClaudeCoach
 from .paths import bundle_dir, user_data_dir
@@ -107,6 +110,46 @@ def _make_coach(health_summary: str, history_file: Path):
     return ClaudeCoach(health_summary=health_summary, history_file=history_file)
 
 
+def _extra_context_notes(hd: dict, settings: dict) -> str:
+    """Compose the proactive-coaching notes (active alerts + goal progress)."""
+    parts = []
+    alerts = ins.compute_alerts(hd)
+    if alerts:
+        parts.append(ins.format_for_prompt(alerts))
+    progress = gl.compute_progress(gl.load_goals(), hd, (hd or {}).get("activities", []))
+    if progress:
+        parts.append(gl.format_for_prompt(progress))
+    return "\n\n".join(parts)
+
+
+def _build_coach_summary(settings: dict) -> str:
+    """
+    Build the full system-context string for the coach from current global
+    health/nutrition state. Single source of truth used by _connect() and
+    every route that rebuilds the coach (profile/goals changes).
+    """
+    trend_summary = format_trend_summary(health_data) if health_data else ""
+    memory_notes = mm.format_memory_for_prompt(mm.load_memory())
+    extra_notes = _extra_context_notes(health_data, settings) if health_data else ""
+    return format_health_summary(
+        health_data, settings, nutrition_data, nutrition_log,
+        memory_notes=memory_notes,
+        trend_summary=trend_summary,
+        extra_notes=extra_notes,
+    )
+
+
+def _rebuild_coach() -> None:
+    """Rebuild health_summary + coach from current globals (after profile/goal edits)."""
+    global health_summary, coach
+    if not health_data:
+        return
+    settings = sm.load_settings()
+    health_summary = _build_coach_summary(settings)
+    _provider = settings.get("ai_provider", "claude")
+    coach = _make_coach(health_summary, user_data_dir() / f"chat_history_{_provider}.json")
+
+
 # ---------------------------------------------------------------------------
 # Connection helper — called on startup and after credential updates
 # ---------------------------------------------------------------------------
@@ -158,16 +201,9 @@ async def _connect() -> None:
         nutrition_data = np_.load_nutrition()
         nutrition_log = np_.load_nutrition_log()
 
-        # Build trend summary and load persistent memory for system prompt injection
-        trend_summary = format_trend_summary(raw)
+        # Build the full coach context (memory + trends + alerts + goals)
         coach_memory  = mm.load_memory()
-        memory_notes  = mm.format_memory_for_prompt(coach_memory)
-
-        health_summary = format_health_summary(
-            raw, settings, nutrition_data, nutrition_log,
-            memory_notes=memory_notes,
-            trend_summary=trend_summary,
-        )
+        health_summary = _build_coach_summary(settings)
         _provider = settings.get("ai_provider", "claude")
         coach = _make_coach(health_summary, user_data_dir() / f"chat_history_{_provider}.json")
         garmin_connected = True
@@ -508,39 +544,70 @@ async def api_training_log(refresh: int = 0):
 
 def _build_chart_series() -> dict:
     """
-    Return {dates, steps, stress, resting_hr, readiness, readiness_estimated}
-    aligned on a sorted date axis, drawn from the in-memory health_data.
-    Missing values are null so the chart can gap them.
+    Return aligned daily series for charting, drawn from the in-memory
+    health_data (up to the 90-day archive). Includes steps, stress, resting HR,
+    training readiness, sleep score, sleep hours, HRV (overnight + baseline),
+    body battery, and weight. Also returns 7-day rolling averages and the set of
+    dates that had an activity (for annotations). Missing values are null.
     """
     hd = health_data or {}
     by_date: dict[str, dict] = {}
-    for d in hd.get("daily_stats") or []:
-        day = d.get("date")
-        if day:
-            by_date.setdefault(day, {})[".stats"] = d
-    for r in hd.get("training_readiness") or []:
-        day = r.get("date")
-        if day:
-            by_date.setdefault(day, {})[".ready"] = r
+
+    def put(rows, tag):
+        for r in rows or []:
+            day = r.get("date")
+            if day:
+                by_date.setdefault(day, {})[tag] = r
+
+    put(hd.get("daily_stats"), "stats")
+    put(hd.get("training_readiness"), "ready")
+    put(hd.get("sleep"), "sleep")
+    put(hd.get("hrv"), "hrv")
+    put(hd.get("body_composition"), "body")
 
     dates = sorted(by_date)
-    steps, stress, rhr, readiness, est = [], [], [], [], []
-    for day in dates:
-        s = by_date[day].get(".stats") or {}
-        r = by_date[day].get(".ready") or {}
-        steps.append(s.get("steps"))
-        stress.append(s.get("stress_avg"))
-        rhr.append(s.get("resting_hr"))
-        readiness.append(r.get("score"))
-        est.append(bool(r.get("estimated")))
-    return {
-        "dates": dates,
-        "steps": steps,
-        "stress": stress,
-        "resting_hr": rhr,
-        "readiness": readiness,
-        "readiness_estimated": est,
+    series: dict[str, list] = {
+        "steps": [], "stress": [], "resting_hr": [], "readiness": [],
+        "readiness_estimated": [], "sleep_score": [], "sleep_hours": [],
+        "hrv": [], "hrv_baseline": [], "body_battery": [], "weight": [],
     }
+    for day in dates:
+        s = by_date[day].get("stats") or {}
+        r = by_date[day].get("ready") or {}
+        sl = by_date[day].get("sleep") or {}
+        hv = by_date[day].get("hrv") or {}
+        bd = by_date[day].get("body") or {}
+        total_sleep = sl.get("total_seconds")
+        series["steps"].append(s.get("steps"))
+        series["stress"].append(s.get("stress_avg"))
+        series["resting_hr"].append(s.get("resting_hr"))
+        series["readiness"].append(r.get("score"))
+        series["readiness_estimated"].append(bool(r.get("estimated")))
+        series["sleep_score"].append(sl.get("score"))
+        series["sleep_hours"].append(round(total_sleep / 3600, 2) if total_sleep else None)
+        series["hrv"].append(hv.get("last_night_avg"))
+        series["hrv_baseline"].append(hv.get("weekly_avg"))
+        series["body_battery"].append(s.get("body_battery"))
+        series["weight"].append(bd.get("weight"))
+
+    def rolling(vals, window=7):
+        out = []
+        for i in range(len(vals)):
+            lo = max(0, i - window + 1)
+            w = [v for v in vals[lo:i + 1] if isinstance(v, (int, float))]
+            out.append(round(sum(w) / len(w), 1) if w else None)
+        return out
+
+    rolling_keys = ("steps", "stress", "resting_hr", "readiness",
+                    "sleep_score", "sleep_hours", "hrv", "body_battery", "weight")
+    roll = {k: rolling(series[k]) for k in rolling_keys}
+
+    activity_days = sorted({
+        (a.get("date") or "")[:10]
+        for a in hd.get("activities") or [] if a.get("date")
+    })
+
+    return {"dates": dates, **series, "rolling": roll, "activity_days": activity_days}
 
 
 @app.get("/charts", response_class=HTMLResponse)
@@ -553,6 +620,92 @@ async def charts_page(request: Request):
 @app.get("/api/charts-data")
 async def api_charts_data():
     return JSONResponse(_build_chart_series())
+
+
+# ---------------------------------------------------------------------------
+# Insights — proactive trend alerts (#5)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/insights")
+async def api_insights():
+    return JSONResponse({"alerts": ins.compute_alerts(health_data)})
+
+
+# ---------------------------------------------------------------------------
+# Goals & progress tracking (#6)
+# ---------------------------------------------------------------------------
+
+@app.get("/goals", response_class=HTMLResponse)
+async def goals_page(request: Request):
+    if not garmin_connected:
+        return RedirectResponse("/settings")
+    return templates.TemplateResponse(request, "goals.html", {
+        "request": request,
+        "goal_types": gl.GOAL_TYPES,
+    })
+
+
+@app.get("/api/goals")
+async def api_goals_list():
+    progress = gl.compute_progress(
+        gl.load_goals(), health_data, (health_data or {}).get("activities", []))
+    return JSONResponse({"goals": progress})
+
+
+@app.post("/api/goals")
+async def api_goals_add(request: Request):
+    data = await request.json()
+    goal = gl.add_goal(data)
+    _rebuild_coach()   # keep coach context aligned to the new goal
+    return JSONResponse({"ok": True, "goal": goal})
+
+
+@app.delete("/api/goals/{goal_id}")
+async def api_goals_delete(goal_id: str):
+    gl.delete_goal(goal_id)
+    _rebuild_coach()
+    return JSONResponse({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Weekly review synthesis (#7)
+# ---------------------------------------------------------------------------
+
+def _ephemeral_ask(prompt: str) -> str:
+    """One-off AI call that does NOT touch the live chat history."""
+    settings = sm.load_settings()
+    fresh = _make_coach(health_summary or "", user_data_dir() / "review_scratch.json")
+    fresh.reset_history()
+    return fresh.chat(prompt)
+
+
+@app.get("/review", response_class=HTMLResponse)
+async def review_page(request: Request):
+    if not garmin_connected:
+        return RedirectResponse("/settings")
+    return templates.TemplateResponse(request, "review.html", {"request": request})
+
+
+@app.get("/api/weekly-review")
+async def api_weekly_review_list():
+    return JSONResponse({"reviews": wr.list_reviews()})
+
+
+@app.post("/api/weekly-review")
+async def api_weekly_review_generate():
+    if not garmin_connected or not coach:
+        return JSONResponse({"ok": False, "error": "Not connected."}, status_code=400)
+    try:
+        review = await asyncio.to_thread(
+            wr.generate,
+            health_data,
+            (health_data or {}).get("activities", []),
+            nutrition_data,
+            _ephemeral_ask,
+        )
+        return JSONResponse({"ok": True, "review": review})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
 def _nutrition_status() -> dict | None:
@@ -884,16 +1037,7 @@ async def api_save_profile(request: Request):
         "health_notes":    (form.get("health_notes") or "").strip(),
     }
     sm.save_settings(settings)
-    if health_data:
-        trend_summary = format_trend_summary(health_data)
-        memory_notes  = mm.format_memory_for_prompt(mm.load_memory())
-        health_summary = format_health_summary(
-            health_data, settings, nutrition_data, nutrition_log,
-            memory_notes=memory_notes,
-            trend_summary=trend_summary,
-        )
-        _provider = settings.get("ai_provider", "claude")
-        coach = _make_coach(health_summary, user_data_dir() / f"chat_history_{_provider}.json")
+    _rebuild_coach()
     return RedirectResponse("/settings?success=profile_saved#profile", status_code=303)
 
 

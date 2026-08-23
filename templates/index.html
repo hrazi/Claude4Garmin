@@ -21,6 +21,8 @@
       <button class="btn-ghost" id="btn-refresh" title="Re-fetch Garmin data">↺ <span class="btn-text">Refresh data</span></button>
       <a href="/training-log" class="btn-ghost">📖 <span class="btn-text">Training Log</span></a>
       <a href="/charts" class="btn-ghost">📈 <span class="btn-text">Charts</span></a>
+      <a href="/goals" class="btn-ghost">🎯 <span class="btn-text">Goals</span></a>
+      <a href="/review" class="btn-ghost">📝 <span class="btn-text">Review</span></a>
       <a href="/settings" class="btn-ghost">⚙ <span class="btn-text">Settings</span></a>
     </div>
   </header>
@@ -35,6 +37,9 @@
 
     <!-- Chat panel -->
     <main class="chat-panel">
+
+      <!-- Proactive alerts banner (populated from /api/insights) -->
+      <div id="alerts-banner" style="display:none; flex-direction:column;"></div>
 
       {% if not profile_complete %}
       <!-- Profile nudge banner -->
@@ -123,5 +128,28 @@
   <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 
   <script src="/static/app.js"></script>
+  <script>
+    // Proactive alerts banner (#5) — non-blocking, styled by severity.
+    (function () {
+      const STYLE = {
+        warning:  { bg: "#fef2f2", bd: "#fecaca", fg: "#991b1b", icon: "⚠️" },
+        caution:  { bg: "#fffbeb", bd: "#fde68a", fg: "#92400e", icon: "🟡" },
+        positive: { bg: "#f0fdf4", bd: "#bbf7d0", fg: "#166534", icon: "✅" },
+        info:     { bg: "#eff6ff", bd: "#bfdbfe", fg: "#1e40af", icon: "ℹ️" },
+      };
+      const esc = s => (s || "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+      fetch("/api/insights").then(r => r.json()).then(({ alerts }) => {
+        if (!alerts || !alerts.length) return;
+        const box = document.getElementById("alerts-banner");
+        box.innerHTML = alerts.map(a => {
+          const s = STYLE[a.severity] || STYLE.info;
+          return '<div style="background:' + s.bg + ';border-bottom:1px solid ' + s.bd +
+            ';padding:9px 20px;font-size:13px;color:' + s.fg + '">' +
+            '<b>' + s.icon + ' ' + esc(a.title) + '</b> — ' + esc(a.detail) + '</div>';
+        }).join("");
+        box.style.display = "flex";
+      }).catch(() => {});
+    })();
+  </script>
 </body>
 </html>
