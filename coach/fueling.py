@@ -71,24 +71,46 @@ def resolve_weight_kg(health_data: dict, nutrition_data: dict,
 
 def _hr_max(settings: dict, health_data: dict) -> int:
     """
-    Estimated maximum heart rate. Uses age when the profile has it, otherwise
-    the highest average HR actually seen in training, which is conservative but
-    real, and finally a plain default.
+    Estimated maximum heart rate.
+
+    An age formula is a population average; a heart rate you actually hit is a
+    fact. So the recorded peak acts as a floor that the formula can raise but
+    never undercut - otherwise a 40-year-old who has genuinely seen 184 bpm
+    would be handed a "max" of 180 and every hard session would read as over
+    100% of maximum.
     """
     profile = (settings or {}).get("athlete_profile") or {}
+
+    estimate = 0
     try:
         age = int(profile.get("age"))
         if 10 < age < 100:
-            return round(208 - 0.7 * age)      # Tanaka
+            estimate = round(208 - 0.7 * age)   # Tanaka
     except (TypeError, ValueError):
         pass
 
-    seen = [a.get("max_hr") for a in (health_data or {}).get("activities") or []
-            if isinstance(a.get("max_hr"), (int, float)) and 100 < a["max_hr"] < 230]
+    seen = sorted((a.get("max_hr") for a in (health_data or {}).get("activities") or []
+                   if isinstance(a.get("max_hr"), (int, float)) and 100 < a["max_hr"] < 230),
+                  reverse=True)
+
+    # Strap dropouts and cadence lock can log wildly high readings, and they
+    # cluster, so a pairwise check alone is not enough. Cap at what is
+    # physiologically credible: generous enough that a masters athlete who
+    # genuinely outruns the age formula still counts.
+    ceiling = max(estimate + 25, 190) if estimate else 210
+    seen = [h for h in seen if h <= ceiling]
+
+    # Then drop an isolated spike sitting far above the next reading down.
+    while len(seen) > 1 and seen[0] - seen[1] > 12:
+        seen.pop(0)
+
     if seen:
-        # The highest HR actually recorded is a floor for true max, not an
-        # estimate of it, so allow a little headroom above the observed peak.
-        return max(170, round(max(seen) * 1.02))
+        # The recorded peak is a floor for true max, not an estimate of it,
+        # so allow a little headroom above it.
+        estimate = max(estimate, round(seen[0] * 1.02))
+
+    if estimate:
+        return max(170, estimate)
 
     avg_seen = [a.get("avg_hr") for a in (health_data or {}).get("activities") or []
                 if isinstance(a.get("avg_hr"), (int, float)) and 60 < a["avg_hr"] < 220]
