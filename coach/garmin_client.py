@@ -7,7 +7,7 @@ Authentication strategy:
 - Supports 2FA via an interactive prompt callback passed to the Garmin constructor
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -280,6 +280,24 @@ def _get(data: dict, *keys, default=None):
         if current is None:
             return default
     return current
+
+
+def _local_wall_clock(ms) -> Optional[str]:
+    """
+    Convert a Garmin *TimestampLocal epoch-millis value to an ISO wall-clock
+    string. Garmin pre-shifts these by the UTC offset, so reading them as UTC
+    yields the time the athlete actually saw on the clock.
+    """
+    if not ms:
+        return None
+    try:
+        return (
+            datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc)
+            .replace(tzinfo=None)
+            .isoformat(timespec="minutes")
+        )
+    except (ValueError, OSError, OverflowError):
+        return None
 
 
 def _seconds_to_hm(seconds: Optional[int]) -> str:
@@ -618,6 +636,13 @@ def fetch_health_data(
                     "score": (
                         _get(dto, "sleepScores", "overall", "value")
                         or _get(dto, "sleepScoreValue")
+                    ),
+                    # Wall-clock bed/wake times, used by the sleep-consistency chart
+                    "bedtime_local": _local_wall_clock(
+                        _get(dto, "sleepStartTimestampLocal")
+                    ),
+                    "wake_local": _local_wall_clock(
+                        _get(dto, "sleepEndTimestampLocal")
                     ),
                 }
             except Exception as e:
@@ -1056,3 +1081,43 @@ def format_health_summary(
                 lines.append("")
 
     return "\n".join(lines)
+
+
+def backfill_sleep_times(client, sleep_rows: list, limit: int = 120,
+                         progress=None) -> int:
+    """
+    Fill missing bedtime/wake timestamps on already-cached sleep records.
+
+    Older caches predate these fields, so the sleep-consistency chart would
+    otherwise stay empty until 90 days of new data accumulated. Only nights
+    that recorded sleep but lack timestamps are fetched. Returns the number of
+    nights updated; the caller is responsible for persisting the cache.
+    """
+    todo = [
+        r for r in sleep_rows or []
+        if r.get("date")
+        and r.get("total_seconds")
+        and not r.get("bedtime_local")
+        and not r.get("sleep_times_error")
+    ][-limit:]
+
+    updated = 0
+    for i, row in enumerate(todo, 1):
+        try:
+            dto = _get(client.get_sleep_data(row["date"]), "dailySleepDTO") or {}
+            bed = _local_wall_clock(_get(dto, "sleepStartTimestampLocal"))
+            wake = _local_wall_clock(_get(dto, "sleepEndTimestampLocal"))
+            if bed and wake:
+                row["bedtime_local"] = bed
+                row["wake_local"] = wake
+                updated += 1
+            else:
+                # Recorded by a device that does not report bed/wake times.
+                row["sleep_times_error"] = "not reported"
+        except Exception as e:
+            row["sleep_times_error"] = str(e)
+
+        if progress:
+            progress(i, len(todo), row["date"])
+
+    return updated

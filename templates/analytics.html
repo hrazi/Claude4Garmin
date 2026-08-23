@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Analytics — Garmin Health Coach</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    .an-wrap { max-width: 1140px; margin: 0 auto; padding: 24px; padding-top: calc(var(--header-h, 56px) + 20px); }
+    .an-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; }
+    .an-tab {
+      border: 1px solid #d7dae0; background: #fff; color: #4a4f57; border-radius: 999px;
+      padding: 8px 15px; font-size: 13px; cursor: pointer; white-space: nowrap;
+    }
+    .an-tab.active { background: #2b2f36; color: #fff; border-color: transparent; }
+    .an-card { background: #fff; border: 1px solid #ececf0; border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+    .an-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+    .an-title { font-size: 15px; font-weight: 600; color: #2b2f36; }
+    .an-sub { font-size: 12.5px; color: #8a8f98; margin-top: 3px; max-width: 640px; line-height: 1.5; }
+    .an-canvas-box { position: relative; height: 420px; }
+    .an-canvas-box.tall { height: 520px; }
+    .an-state { text-align: center; color: #8a8f98; padding: 50px 20px; font-size: 15px; }
+    .an-seg { display: inline-flex; border: 1px solid #d7dae0; border-radius: 8px; overflow: hidden; }
+    .an-seg button { border: 0; background: #fff; color: #4a4f57; padding: 6px 11px; font-size: 12.5px; cursor: pointer; }
+    .an-seg button + button { border-left: 1px solid #d7dae0; }
+    .an-seg button.active { background: #2b2f36; color: #fff; }
+    .an-stats { display: flex; gap: 22px; flex-wrap: wrap; margin-bottom: 14px; }
+    .an-stat .v { font-size: 20px; font-weight: 650; color: #2b2f36; }
+    .an-stat .l { font-size: 11.5px; color: #8a8f98; text-transform: uppercase; letter-spacing: .04em; }
+    .an-note { font-size: 12px; color: #9aa0a8; margin-top: 12px; line-height: 1.55; }
+    .an-btn { border: 1px solid #d7dae0; background: #fff; color: #4a4f57; border-radius: 8px; padding: 7px 13px; font-size: 12.5px; cursor: pointer; }
+    .an-btn:hover { background: #f6f7f9; }
+    .an-btn[disabled] { opacity: .55; cursor: default; }
+
+    /* Heatmap */
+    .hm-scroll { overflow-x: auto; padding-bottom: 6px; }
+    .hm-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 13px); gap: 3px; }
+    .hm-cell { width: 13px; height: 13px; border-radius: 2.5px; background: #ebedf0; }
+    .hm-cell.has { cursor: pointer; }
+    .hm-months { display: grid; grid-auto-flow: column; gap: 3px; font-size: 10.5px; color: #9aa0a8; margin-bottom: 4px; height: 14px; }
+    .hm-legend { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #8a8f98; margin-top: 12px; }
+    .hm-legend .hm-cell { cursor: default; }
+    .hm-days { display: grid; grid-template-rows: repeat(7, 13px); gap: 3px; font-size: 10px; color: #9aa0a8; margin-right: 6px; }
+    .hm-row { display: flex; align-items: flex-start; }
+
+    /* Correlation matrix */
+    .cm-table { border-collapse: separate; border-spacing: 2px; font-size: 11.5px; }
+    .cm-table th { color: #6b7079; font-weight: 500; padding: 3px 6px; text-align: right; white-space: nowrap; }
+    .cm-table th.col { text-align: left; transform: rotate(-45deg); transform-origin: left bottom; height: 96px; width: 34px; font-size: 11px; }
+    .cm-cell { width: 42px; height: 30px; border-radius: 4px; text-align: center; color: #fff; font-variant-numeric: tabular-nums; cursor: pointer; }
+    .cm-cell.na { background: #f1f2f4; color: #b9bdc4; cursor: default; }
+    .cm-list { margin-top: 16px; display: grid; gap: 7px; }
+    .cm-item { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #4a4f57; }
+    .cm-badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; color: #fff; font-weight: 600; }
+    .an-hint { font-size: 12px; color: #8a8f98; background: #f7f8fa; border: 1px solid #ececf0; border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-left">
+      <span class="header-icon">🔬</span>
+      <span class="header-title">Analytics</span>
+    </div>
+    <div class="header-right">
+      <a href="/" class="btn-ghost">💬 <span class="btn-text">Coach</span></a>
+      <a href="/charts" class="btn-ghost">📈 <span class="btn-text">Charts</span></a>
+      <a href="/training-log" class="btn-ghost">📖 <span class="btn-text">Training Log</span></a>
+      <a href="/goals" class="btn-ghost">🎯 <span class="btn-text">Goals</span></a>
+      <a href="/settings" class="btn-ghost">⚙ <span class="btn-text">Settings</span></a>
+    </div>
+  </header>
+
+  <div class="an-wrap">
+    <div class="an-tabs" id="an-tabs"></div>
+    <div id="an-body"><div class="an-state">Loading analytics…</div></div>
+  </div>
+
+<script>
+const VIEWS = [
+  { id: 'heatmap',      label: '🗓 Activity heatmap' },
+  { id: 'sleep_bands',  label: '🛏 Sleep consistency' },
+  { id: 'hr_zones',     label: '❤️ HR zones' },
+  { id: 'efficiency',   label: '⚡ Efficiency trend' },
+  { id: 'pace_curve',   label: '🏁 Pace curve' },
+  { id: 'correlations', label: '🔗 Correlations' },
+];
+
+let DATA = null;
+const urlView = new URLSearchParams(location.search).get('view');
+let current = urlView || localStorage.getItem('analyticsView') || 'heatmap';
+if (!VIEWS.some(v => v.id === current)) current = 'heatmap';
+let charts = [];
+
+const $ = id => document.getElementById(id);
+const body = () => $('an-body');
+
+function destroyCharts() { charts.forEach(c => { try { c.destroy(); } catch (e) {} }); charts = []; }
+
+function renderTabs() {
+  $('an-tabs').innerHTML = VIEWS.map(v =>
+    `<button class="an-tab ${v.id === current ? 'active' : ''}" data-view="${v.id}">${v.label}</button>`
+  ).join('');
+  $('an-tabs').querySelectorAll('.an-tab').forEach(b => {
+    b.onclick = () => {
+      current = b.dataset.view;
+      localStorage.setItem('analyticsView', current);
+      history.replaceState(null, '', '?view=' + current);
+      renderTabs(); render();
+    };
+  });
+}
+
+function card(title, sub, inner, extra) {
+  return `<div class="an-card">
+    <div class="an-head">
+      <div><div class="an-title">${title}</div><div class="an-sub">${sub}</div></div>
+      <div>${extra || ''}</div>
+    </div>${inner}</div>`;
+}
+
+function stat(v, l) { return `<div class="an-stat"><div class="v">${v}</div><div class="l">${l}</div></div>`; }
+function empty(msg) { return `<div class="an-state">${msg}</div>`; }
+
+// ---------------------------------------------------------------- #33 heatmap
+let hmMetric = localStorage.getItem('hmMetric') || 'distance';
+let hmYear = null;
+
+function renderHeatmap(d) {
+  if (!d || d.error || !d.years?.length) return body().innerHTML = empty('No activity history yet.');
+  if (!hmYear || !d.years.includes(hmYear)) hmYear = d.years[0];
+  if (!d.metrics[hmMetric]) hmMetric = 'distance';
+
+  const meta = d.metrics[hmMetric];
+  const vals = d.values[hmMetric] || {};
+  const yearVals = Object.entries(vals).filter(([k]) => k.startsWith(hmYear));
+  const max = yearVals.length ? Math.max(...yearVals.map(([, v]) => v)) : 0;
+  const total = yearVals.reduce((s, [, v]) => s + v, 0);
+
+  const start = new Date(Date.UTC(+hmYear, 0, 1));
+  const end = new Date(Date.UTC(+hmYear, 11, 31));
+  // Grid starts on the Sunday on or before Jan 1 so weekday rows line up.
+  const gridStart = new Date(start);
+  gridStart.setUTCDate(gridStart.getUTCDate() - gridStart.getUTCDay());
+
+  const shade = v => {
+    if (!v || !max) return '#ebedf0';
+    const t = Math.min(1, Math.sqrt(v / max));
+    const stops = ['#d7e9d0', '#a9d69b', '#6cc05f', '#3a9e35', '#1c6b1f'];
+    return stops[Math.min(stops.length - 1, Math.floor(t * stops.length))];
+  };
+
+  let cells = '', months = '', lastMonth = -1, weeks = 0;
+  for (let c = new Date(gridStart); c <= end; c.setUTCDate(c.getUTCDate() + 1)) {
+    const iso = c.toISOString().slice(0, 10);
+    const inYear = c >= start && c <= end;
+    const v = inYear ? vals[iso] : null;
+    if (c.getUTCDay() === 0) {
+      weeks++;
+      const m = c.getUTCMonth();
+      months += `<div>${inYear && m !== lastMonth ? c.toLocaleString('en', { month: 'short', timeZone: 'UTC' }) : ''}</div>`;
+      if (inYear) lastMonth = m;
+    }
+    const types = (d.types[iso] || []).map(t => `${t[1]}× ${t[0]}`).join(', ');
+    const tip = v
+      ? `${iso}: ${fmtVal(v, hmMetric)} ${meta.unit}${types ? ' — ' + types : ''}`
+      : (inYear ? `${iso}: rest` : '');
+    cells += `<div class="hm-cell ${v ? 'has' : ''}" style="background:${inYear ? shade(v) : 'transparent'}" title="${tip}"></div>`;
+  }
+
+  const dayLabels = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
+  const grid = `<div class="hm-scroll">
+      <div class="hm-months" style="grid-template-columns:repeat(${weeks},13px);margin-left:28px">${months}</div>
+      <div class="hm-row">
+        <div class="hm-days">${dayLabels.map(l => `<div>${l}</div>`).join('')}</div>
+        <div class="hm-grid">${cells}</div>
+      </div>
+    </div>
+    <div class="hm-legend">Less
+      ${['#ebedf0', '#d7e9d0', '#a9d69b', '#6cc05f', '#3a9e35', '#1c6b1f'].map(c => `<div class="hm-cell" style="background:${c}"></div>`).join('')}
+      More <span style="margin-left:12px">Hover a square for that day.</span>
+    </div>`;
+
+  const controls = `
+    <div class="an-seg" id="hm-metric" style="margin-right:8px">
+      ${Object.entries(d.metrics).map(([k, m]) => `<button data-m="${k}" class="${k === hmMetric ? 'active' : ''}">${m.label}</button>`).join('')}
+    </div>
+    <div class="an-seg" id="hm-year">
+      ${d.years.slice(0, 6).map(y => `<button data-y="${y}" class="${y === hmYear ? 'active' : ''}">${y}</button>`).join('')}
+    </div>`;
+
+  const stats = `<div class="an-stats">
+      ${stat(fmtVal(total, hmMetric) + ' ' + meta.unit, hmMetric === 'readiness' ? 'sum (n/a)' : hmYear + ' total')}
+      ${stat(yearVals.length, 'days with data')}
+      ${stat(d.streaks.longest + 'd', 'longest streak')}
+      ${stat(d.streaks.current + 'd', 'current streak')}
+    </div>`;
+
+  body().innerHTML = card('Activity heatmap',
+    'Every day of the year shaded by training volume. Dense blocks are consistent months; pale gaps are lay-offs.',
+    stats + grid, controls);
+
+  $('hm-metric').querySelectorAll('button').forEach(b => b.onclick = () => {
+    hmMetric = b.dataset.m; localStorage.setItem('hmMetric', hmMetric); renderHeatmap(d);
+  });
+  $('hm-year').querySelectorAll('button').forEach(b => b.onclick = () => {
+    hmYear = b.dataset.y; renderHeatmap(d);
+  });
+}
+
+function fmtVal(v, metric) {
+  if (v == null) return '–';
+  if (metric === 'steps') return Math.round(v).toLocaleString();
+  if (metric === 'readiness') return Math.round(v);
+  return v >= 100 ? Math.round(v).toLocaleString() : v.toFixed(1);
+}
+
+// ------------------------------------------------------------ #36 sleep bands
+function minToClock(m) {
+  if (m == null) return '–';
+  const t = ((Math.round(m) + 720) % 1440 + 1440) % 1440;
+  return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
+}
+
+function renderSleepBands(d) {
+  if (!d || d.error) return body().innerHTML = empty('Sleep data unavailable.');
+  if (!d.nights_with_times) {
+    body().innerHTML = card('Sleep consistency',
+      'Bedtime and wake time for every night, so schedule drift is visible.',
+      empty('No bed/wake times cached yet.') +
+      `<div style="text-align:center"><button class="an-btn" id="an-backfill" data-target="sleep">Fetch sleep times from Garmin</button></div>`);
+    return wireBackfill();
+  }
+
+  const idx = d.dates.map((_, i) => i).filter(i => d.bed[i] != null && d.wake[i] != null);
+  const labels = idx.map(i => d.dates[i]);
+
+  // Bound the axis by the normal nights so a single nap or odd night cannot
+  // stretch the scale and squash everything else into a sliver.
+  const nightly = idx.filter(i => !d.naps[i]);
+  const pct = (arr, p) => {
+    if (!arr.length) return 0;
+    const s = [...arr].sort((a, b) => a - b);
+    return s[Math.min(s.length - 1, Math.floor(p * (s.length - 1)))];
+  };
+  const lo = pct(nightly.map(i => d.bed[i]), 0.02) - 45;
+  const hi = pct(nightly.map(i => d.wake[i]), 0.98) + 45;
+  const clipped = idx.filter(i => d.bed[i] < lo || d.wake[i] > hi).length;
+
+  body().innerHTML = card('Sleep consistency',
+    'Each bar spans bedtime to wake on a noon-to-noon axis, so a night never wraps. Tight, level bars mean a stable body clock.',
+    `<div class="an-stats">
+       ${stat(minToClock(d.median_bed), 'median bedtime')}
+       ${stat(minToClock(d.median_wake), 'median wake')}
+       ${stat(d.bed_spread_min != null ? d.bed_spread_min + ' min' : '–', 'bedtime variability')}
+       ${stat(d.nights_with_times, 'nights charted')}
+     </div>
+     <div class="an-canvas-box tall"><canvas id="c-sleep"></canvas></div>
+     <div class="an-note">Lower bedtime variability means a more regular schedule. Bars are coloured by sleep score; grey bars are daytime naps and are excluded from the medians.${clipped ? ` ${clipped} night${clipped > 1 ? 's fall' : ' falls'} outside the plotted range.` : ''}</div>`);
+
+  const scoreColor = (s, nap) => nap ? 'rgba(150,155,165,.5)'
+    : s == null ? 'rgba(150,155,165,.55)'
+    : s >= 80 ? 'rgba(52,168,83,.75)' : s >= 60 ? 'rgba(251,188,5,.8)' : 'rgba(234,67,53,.7)';
+
+  charts.push(new Chart($('c-sleep'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Sleep window',
+        data: idx.map(i => [d.bed[i], d.wake[i]]),
+        backgroundColor: idx.map(i => scoreColor(d.scores[i], d.naps[i])),
+        borderWidth: 0, barPercentage: 0.92, categoryPercentage: 0.98,
+      }],
+    },
+    options: {
+      indexAxis: 'x', responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const i = idx[ctx.dataIndex];
+              const dur = (d.wake[i] - d.bed[i]) / 60;
+              return [`Bed ${minToClock(d.bed[i])} → Wake ${minToClock(d.wake[i])}`,
+                      `In bed ${dur.toFixed(1)} h${d.naps[i] ? ' (nap)' : ''}`,
+                      d.scores[i] != null ? `Sleep score ${d.scores[i]}` : 'No score'];
+            },
+          },
+        },
+        annotation: undefined,
+      },
+      scales: {
+        y: {
+          min: lo,
+          max: hi,
+          ticks: { stepSize: 60, callback: v => minToClock(v) },
+          title: { display: true, text: 'Clock time' },
+          grid: { color: '#f0f1f4' },
+        },
+        x: { ticks: { maxTicksLimit: 14, maxRotation: 0 }, grid: { display: false } },
+      },
+    },
+  }));
+}
+
+// --------------------------------------------------------------- #34 HR zones
+const ZONE_COLORS = ['#9aa7b8', '#4f9bd9', '#3fb27f', '#f0a63a', '#e2574c'];
+
+function renderZones(d) {
+  if (!d || d.error) return body().innerHTML = empty('HR zone data unavailable.');
+  if (!d.covered) {
+    body().innerHTML = card('Heart-rate zones',
+      'Time spent in each HR zone, per session and per week.',
+      empty(`No HR zone data cached for the last ${d.days} days (${d.in_range} activities found).`) +
+      `<div style="text-align:center"><button class="an-btn" id="an-backfill" data-target="hr_zones">Fetch HR zones from Garmin</button></div>`);
+    return wireBackfill();
+  }
+
+  const easyPct = d.easy_pct;
+  const verdict = easyPct == null ? ''
+    : easyPct >= 75 ? 'Well polarized — most volume is genuinely easy.'
+    : easyPct >= 60 ? 'Middling. A little more easy volume would help.'
+    : 'Too much moderate-to-hard work. This is the classic grey-zone trap.';
+
+  body().innerHTML = card('Heart-rate zones',
+    'Minutes in each zone per week, plus the easy/hard split. Endurance plans usually target ~80% easy.',
+    `<div class="an-stats">
+       ${stat(easyPct != null ? easyPct + '%' : '–', 'easy (Z1–Z2)')}
+       ${stat(d.target_easy_pct + '%', 'target easy')}
+       ${stat(Math.round(d.easy_min + d.hard_min) + ' min', 'total logged')}
+       ${stat(d.covered + '/' + d.in_range, 'sessions with zones')}
+     </div>
+     <div class="an-canvas-box"><canvas id="c-zonesw"></canvas></div>
+     <div class="an-note"><strong>${verdict}</strong> Only sessions with cached zone data are counted.
+       ${d.covered < d.in_range ? '<button class="an-btn" id="an-backfill" data-target="hr_zones" style="margin-left:8px">Fetch the missing ' + (d.in_range - d.covered) + '</button>' : ''}
+     </div>
+     <div style="height:18px"></div>
+     <div class="an-title" style="margin-bottom:8px">Per session</div>
+     <div class="an-canvas-box"><canvas id="c-zonesa"></canvas></div>`);
+
+  charts.push(new Chart($('c-zonesw'), {
+    type: 'bar',
+    data: {
+      labels: d.weeks,
+      datasets: d.zone_labels.map((z, i) => ({
+        label: z, data: d.weekly.map(w => w[i]),
+        backgroundColor: ZONE_COLORS[i], borderWidth: 0,
+      })),
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom' }, tooltip: { mode: 'index' } },
+      scales: {
+        x: { stacked: true, grid: { display: false }, title: { display: true, text: 'Week beginning' } },
+        y: { stacked: true, title: { display: true, text: 'Minutes' }, grid: { color: '#f0f1f4' } },
+      },
+    },
+  }));
+
+  const acts = d.activities.slice(-30);
+  charts.push(new Chart($('c-zonesa'), {
+    type: 'bar',
+    data: {
+      labels: acts.map(a => a.date),
+      datasets: d.zone_labels.map((z, i) => ({
+        label: z, data: acts.map(a => a.zones[i]),
+        backgroundColor: ZONE_COLORS[i], borderWidth: 0,
+      })),
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: { mode: 'index', callbacks: { title: items => {
+          const a = acts[items[0].dataIndex]; return `${a.date} — ${a.name} (${a.total_min} min)`;
+        } } },
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { maxRotation: 0, maxTicksLimit: 12 } },
+        y: { stacked: true, title: { display: true, text: 'Minutes' }, grid: { color: '#f0f1f4' } },
+      },
+    },
+  }));
+  wireBackfill();
+}
+
+// ------------------------------------------------------------- #38 efficiency
+function renderEfficiency(d) {
+  if (!d || d.error || !d.count) {
+    return body().innerHTML = empty('Not enough runs with heart-rate data yet.');
+  }
+  const dir = d.change_pct == null ? '' :
+    d.change_pct > 1 ? `Up ${d.change_pct}% — you are covering more ground per heartbeat.`
+    : d.change_pct < -1 ? `Down ${Math.abs(d.change_pct)}% over this period.`
+    : 'Essentially flat.';
+
+  body().innerHTML = card('Aerobic efficiency',
+    'Metres covered per heartbeat on every run over 10 minutes. Rising values mean more speed for the same effort, which is fitness improving independent of how hard you pushed.',
+    `<div class="an-stats">
+       ${stat(d.count, 'runs analysed')}
+       ${stat(d.change_pct != null ? (d.change_pct > 0 ? '+' : '') + d.change_pct + '%' : '–', 'change over span')}
+       ${stat(d.points.at(-1).y, 'latest m/beat')}
+       ${stat(Math.max(...d.points.map(p => p.y)).toFixed(2), 'best m/beat')}
+     </div>
+     <div class="an-canvas-box tall"><canvas id="c-eff"></canvas></div>
+     <div class="an-note"><strong>${dir}</strong> The line is a 30-day rolling median, which ignores one-off outliers. Long runs (15 km+) are drawn larger.</div>`);
+
+  charts.push(new Chart($('c-eff'), {
+    data: {
+      datasets: [
+        {
+          type: 'scatter', label: 'Run',
+          data: d.points.map(p => ({ x: p.x, y: p.y, _m: p })),
+          pointRadius: d.points.map(p => p.long_run ? 6 : 3.2),
+          pointBackgroundColor: d.points.map(p => p.long_run ? 'rgba(234,67,53,.75)' : 'rgba(66,133,244,.55)'),
+          pointBorderWidth: 0,
+        },
+        {
+          type: 'line', label: '30-day median',
+          data: d.trend.map(p => ({ x: p.x, y: p.y })),
+          borderColor: '#2b2f36', borderWidth: 2.2, pointRadius: 0, tension: 0.25, fill: false,
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, parsing: true,
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const m = ctx.raw._m;
+              if (!m) return `Median ${ctx.parsed.y}`;
+              return [`${m.name} — ${m.km} km`, `${m.y} m/beat`, `Pace ${m.pace} /km · HR ${m.hr}`];
+            },
+          },
+        },
+      },
+      scales: {
+        x: { type: 'category', labels: [...new Set(d.points.map(p => p.x))].sort(),
+             ticks: { maxRotation: 0, maxTicksLimit: 10 }, grid: { display: false } },
+        y: { title: { display: true, text: 'Metres per heartbeat' }, grid: { color: '#f0f1f4' } },
+      },
+    },
+  }));
+}
+
+// ------------------------------------------------------------- #42 pace curve
+function fmtTime(s) {
+  if (s == null) return '–';
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.round(s % 60);
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+           : `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+function renderPaceCurve(d) {
+  if (!d || d.error || !d.buckets?.some(b => b.best)) {
+    return body().innerHTML = empty('Not enough runs to build a best-effort curve.');
+  }
+  const rows = d.buckets.map(b => `<tr>
+      <td style="padding:6px 12px 6px 0;font-weight:600">${b.label}${b.untested ? ' <span title="Slower than your ' + b.untested_vs + ', so this distance has never been run flat out" style="color:#c8860d;font-weight:400">*</span>' : ''}</td>
+      <td style="padding:6px 12px 6px 0">${b.best ? fmtTime(b.best.seconds) : '–'}</td>
+      <td style="padding:6px 12px 6px 0;color:#8a8f98">${b.best_pace ? b.best_pace.toFixed(2) + ' /km' : '–'}</td>
+      <td style="padding:6px 12px 6px 0;color:#8a8f98">${b.best ? b.best.date : ''}</td>
+      <td style="padding:6px 12px 6px 0">${b.recent ? fmtTime(b.recent.seconds) : '–'}</td>
+    </tr>`).join('');
+  const untested = d.buckets.filter(b => b.untested).map(b => b.label);
+
+  body().innerHTML = card('Best-effort pace curve',
+    'The fastest pace you have held for each race distance, normalised with the Riegel formula. The dashed line projects every distance from your single strongest effort, so the gap to a goal is visible.',
+    `<div class="an-stats">
+       ${stat(d.anchor ? d.anchor.label : '–', 'strongest effort')}
+       ${stat(d.anchor ? fmtTime(d.anchor.seconds) : '–', 'its time')}
+       ${stat(d.runs_considered, 'runs considered')}
+     </div>
+     <div class="an-canvas-box"><canvas id="c-pace"></canvas></div>
+     <table style="margin-top:18px;font-size:13px;color:#4a4f57">
+       <tr style="color:#8a8f98;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em">
+         <th style="text-align:left;padding-right:12px">Dist</th><th style="text-align:left;padding-right:12px">All-time</th>
+         <th style="text-align:left;padding-right:12px">Pace</th><th style="text-align:left;padding-right:12px">When</th>
+         <th style="text-align:left">Last 12 mo</th>
+       </tr>${rows}
+     </table>
+     <div class="an-note">Efforts are normalised to the exact race distance, so a 5.4 km run counts toward the 5K mark. Physically impossible records are filtered out.${untested.length ? ` <br><span style="color:#c8860d">*</span> ${untested.join(', ')} look slow only because you have never run them flat out — those distances appear in your history as warm-ups, not efforts. The dashed projection shows what you should be capable of.` : ''}</div>`);
+
+  const labels = d.buckets.map(b => b.label);
+  charts.push(new Chart($('c-pace'), {
+    data: {
+      labels,
+      datasets: [
+        { type: 'line', label: 'All-time best pace',
+          data: d.buckets.map(b => b.best_pace), borderColor: '#4285f4',
+          backgroundColor: 'rgba(66,133,244,.1)', pointRadius: 4, tension: .3, spanGaps: true, fill: false },
+        { type: 'line', label: 'Last 12 months',
+          data: d.buckets.map(b => b.recent_pace), borderColor: '#ea4335',
+          pointRadius: 4, tension: .3, spanGaps: true, fill: false },
+        { type: 'line', label: 'Projected from best effort',
+          data: d.projections.map(p => p.pace), borderColor: '#9aa0a8',
+          borderDash: [6, 4], pointRadius: 0, tension: .3, fill: false },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: { callbacks: { label: ctx => {
+          const b = d.buckets[ctx.dataIndex];
+          const p = ctx.parsed.y;
+          if (p == null) return `${ctx.dataset.label}: no data`;
+          const mins = Math.floor(p), secs = Math.round((p - mins) * 60);
+          const t = ctx.datasetIndex === 0 ? b.best : ctx.datasetIndex === 1 ? b.recent : d.projections[ctx.dataIndex];
+          return `${ctx.dataset.label}: ${mins}:${String(secs).padStart(2, '0')} /km` + (t?.seconds ? ` (${fmtTime(t.seconds)})` : '');
+        } } },
+      },
+      scales: {
+        y: { title: { display: true, text: 'Pace (min/km) — lower is faster' }, reverse: true,
+             ticks: { callback: v => `${Math.floor(v)}:${String(Math.round((v % 1) * 60)).padStart(2, '0')}` },
+             grid: { color: '#f0f1f4' } },
+        x: { grid: { display: false } },
+      },
+    },
+  }));
+}
+
+// ----------------------------------------------------------- #46 correlations
+function corrColor(r) {
+  if (r == null) return '#f1f2f4';
+  const a = Math.abs(r);
+  const alpha = 0.15 + a * 0.75;
+  return r >= 0 ? `rgba(52,120,246,${alpha})` : `rgba(234,67,53,${alpha})`;
+}
+
+function renderCorrelations(d) {
+  if (!d || d.error || !d.sample_days) return body().innerHTML = empty('Not enough daily data to correlate.');
+
+  const head = `<tr><th></th>${d.labels.map(l => `<th class="col">${l}</th>`).join('')}</tr>`;
+  const rows = d.matrix.map((row, i) => `<tr>
+      <th>${d.labels[i]}</th>
+      ${row.map((r, j) => r == null
+        ? `<td class="cm-cell na">–</td>`
+        : `<td class="cm-cell" style="background:${corrColor(r)}" title="${d.labels[i]} vs ${d.labels[j]}: r = ${r}"
+             data-a="${d.keys[i]}" data-b="${d.keys[j]}">${i === j ? '1' : r.toFixed(2)}</td>`).join('')}
+    </tr>`).join('');
+
+  const top = d.top.map(p => `<div class="cm-item">
+      <span class="cm-badge" style="background:${corrColor(p.r)}">${p.r > 0 ? '+' : ''}${p.r}</span>
+      <span><strong>${p.a}</strong> ${p.r > 0 ? 'rises with' : 'falls as'} <strong>${p.b}</strong> rises
+      <span style="color:#9aa0a8">· ${p.strength}, n=${p.n}</span></span>
+    </div>`).join('');
+
+  body().innerHTML = card('Metric correlations',
+    `How your daily metrics move together over the last ${d.days} days. Blue means they rise together, red means one rises as the other falls. Click any cell to see the scatter behind it.`,
+    `<div class="an-hint">Correlation is not causation — but a strong pair is the first place to look for a lever you can actually pull.</div>
+     <div style="overflow-x:auto"><table class="cm-table">${head}${rows}</table></div>
+     <div class="an-title" style="margin-top:24px">Strongest relationships</div>
+     <div class="cm-list">${top || '<div class="an-sub">Not enough overlapping days yet.</div>'}</div>
+     <div class="an-canvas-box" style="height:340px;margin-top:20px"><canvas id="c-scatter"></canvas></div>
+     <div class="an-note" id="sc-note">Showing the strongest pair. Click a matrix cell to change it.</div>`);
+
+  document.querySelectorAll('.cm-cell[data-a]').forEach(c => {
+    c.onclick = () => drawScatter(d, c.dataset.a, c.dataset.b);
+  });
+  if (d.top.length) drawScatter(d, d.top[0].a_key, d.top[0].b_key);
+}
+
+function drawScatter(d, aKey, bKey) {
+  const ai = d.keys.indexOf(aKey), bi = d.keys.indexOf(bKey);
+  if (ai < 0 || bi < 0) return;
+  const pts = d.dates.map((day, i) => ({
+    x: d.columns[aKey][i], y: d.columns[bKey][i], day,
+  })).filter(p => typeof p.x === 'number' && typeof p.y === 'number');
+
+  const existing = charts.find(c => c.canvas?.id === 'c-scatter');
+  if (existing) { existing.destroy(); charts = charts.filter(c => c !== existing); }
+
+  const r = d.matrix[ai][bi];
+  $('sc-note').innerHTML = `<strong>${d.labels[ai]} vs ${d.labels[bi]}</strong> — r = ${r ?? '–'} over ${pts.length} days. Click another cell to compare a different pair.`;
+
+  charts.push(new Chart($('c-scatter'), {
+    type: 'scatter',
+    data: { datasets: [{ label: `${d.labels[ai]} vs ${d.labels[bi]}`, data: pts,
+      pointBackgroundColor: 'rgba(66,133,244,.55)', pointRadius: 4, pointBorderWidth: 0 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: {
+        label: ctx => [`${ctx.raw.day}`, `${d.labels[ai]}: ${ctx.parsed.x}`, `${d.labels[bi]}: ${ctx.parsed.y}`] } } },
+      scales: {
+        x: { title: { display: true, text: d.labels[ai] }, grid: { color: '#f0f1f4' } },
+        y: { title: { display: true, text: d.labels[bi] }, grid: { color: '#f0f1f4' } },
+      },
+    },
+  }));
+}
+
+// ------------------------------------------------------------------- plumbing
+function wireBackfill() {
+  document.querySelectorAll('#an-backfill').forEach(btn => {
+    btn.onclick = async () => {
+      const target = btn.dataset.target;
+      btn.disabled = true;
+      btn.textContent = 'Fetching from Garmin… this can take a minute';
+      try {
+        const r = await fetch('/api/analytics/backfill', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target }),
+        });
+        const j = await r.json();
+        if (j.error) throw new Error(j.error);
+        await load(true);
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'Failed: ' + e.message + ' — retry';
+      }
+    };
+  });
+}
+
+function render() {
+  destroyCharts();
+  if (!DATA) return;
+  const d = DATA[current];
+  ({
+    heatmap: renderHeatmap, sleep_bands: renderSleepBands, hr_zones: renderZones,
+    efficiency: renderEfficiency, pace_curve: renderPaceCurve, correlations: renderCorrelations,
+  })[current](d);
+}
+
+async function load(force) {
+  if (force) body().innerHTML = '<div class="an-state">Refreshing…</div>';
+  try {
+    const r = await fetch('/api/analytics');
+    DATA = await r.json();
+    render();
+  } catch (e) {
+    body().innerHTML = empty('Could not load analytics: ' + e.message);
+  }
+}
+
+renderTabs();
+load();
+</script>
+</body>
+</html>

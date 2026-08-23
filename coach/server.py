@@ -26,7 +26,7 @@ import subprocess
 import sys
 import threading
 import webbrowser
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 
 from contextlib import asynccontextmanager
@@ -49,7 +49,8 @@ from . import training_log as tl
 from . import insights as ins
 from . import goals as gl
 from . import weekly_review as wr
-from .garmin_client import get_garmin_client, fetch_health_data, fetch_activity_history, format_health_summary, format_trend_summary, fill_readiness_estimates
+from . import analytics as an
+from .garmin_client import get_garmin_client, fetch_health_data, fetch_activity_history, format_health_summary, format_trend_summary, fill_readiness_estimates, backfill_sleep_times
 from .claude_client import ClaudeCoach
 from .paths import bundle_dir, user_data_dir
 
@@ -687,6 +688,115 @@ async def charts_page(request: Request):
 @app.get("/api/charts-data")
 async def api_charts_data():
     return JSONResponse(_build_chart_series())
+
+
+# ---------------------------------------------------------------------------
+# Analytics — deeper visual analysis (#33 #34 #36 #38 #42 #46)
+# ---------------------------------------------------------------------------
+
+@app.get("/analytics", response_class=HTMLResponse)
+async def analytics_page(request: Request):
+    if not garmin_connected:
+        return RedirectResponse("/settings")
+    return templates.TemplateResponse(request, "analytics.html", {"request": request})
+
+
+@app.get("/api/analytics")
+async def api_analytics(view: str = "all", days: int = 90):
+    """
+    Serve one or all analytics views. Activity-derived views use the full
+    training-log history; day-metric views use the 90-day health archive.
+    """
+    history = await _load_activity_history()
+    activities = history.get("activities") or []
+    hd = health_data or {}
+
+    days = max(7, min(days, 365))
+    builders = {
+        "heatmap": lambda: an.build_heatmap(
+            activities, hd.get("daily_stats"), hd.get("training_readiness")
+        ),
+        "sleep_bands": lambda: an.build_sleep_bands(hd.get("sleep")),
+        "hr_zones": lambda: an.build_hr_zones(
+            activities, activity_details, days=max(days, 120)
+        ),
+        "efficiency": lambda: an.build_efficiency(activities),
+        "pace_curve": lambda: an.build_pace_curve(activities),
+        "correlations": lambda: an.build_correlations(hd, activities, days=days),
+    }
+
+    wanted = builders if view in ("all", "") else {view: builders.get(view)}
+    if None in wanted.values():
+        return JSONResponse({"error": f"Unknown view '{view}'"}, status_code=400)
+
+    out = {}
+    for key, build in wanted.items():
+        try:
+            out[key] = build()
+        except Exception as e:
+            out[key] = {"error": str(e)}
+
+    out["history_stale"] = history.get("stale", False)
+    return JSONResponse(out)
+
+
+@app.post("/api/analytics/backfill")
+async def api_analytics_backfill(request: Request):
+    """
+    Fetch the extra data the analytics charts need but older caches lack:
+    sleep bed/wake timestamps (#36) and per-activity HR zones (#34).
+    """
+    global activity_details
+
+    if garmin_client is None:
+        return JSONResponse({"error": "Not connected to Garmin."}, status_code=409)
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    target = body.get("target", "all")
+    result = {}
+
+    if target in ("all", "sleep"):
+        rows = (health_data or {}).get("sleep") or []
+        updated = await asyncio.to_thread(
+            backfill_sleep_times, garmin_client, rows
+        )
+        if updated:
+            await asyncio.to_thread(dc.save_cache, health_data)
+        result["sleep_nights"] = updated
+
+    if target in ("all", "hr_zones"):
+        history = await _load_activity_history()
+        cutoff = (date.today() - timedelta(days=120)).isoformat()
+        recent = [
+            a for a in history.get("activities") or []
+            if (a.get("date") or "")[:10] >= cutoff and a.get("activity_id")
+        ]
+        details = ac.load_activity_details()
+        missing = [
+            str(a["activity_id"]) for a in recent
+            if str(a["activity_id"]) not in details
+        ][:150]
+
+        fetched = 0
+        for activity_id in missing:
+            entry = {"fetched_at": datetime.now().isoformat(timespec="seconds")}
+            try:
+                entry["hr_zones"] = await asyncio.to_thread(
+                    garmin_client.get_activity_hr_in_timezones, activity_id
+                )
+                fetched += 1
+            except Exception as e:
+                entry["hr_zones_error"] = str(e)
+            details[activity_id] = entry
+            ac.save_activity_details(details)   # fault-tolerant: save each
+        activity_details = details
+        result["activities_enriched"] = fetched
+
+    return JSONResponse(result)
 
 
 # ---------------------------------------------------------------------------
