@@ -49,6 +49,9 @@ SETTINGS_FILE = user_data_dir() / "settings.json"
 
 DEFAULTS: dict = {
     "days_back": 7,
+    # Distance units used across the UI and in the coach's health summary.
+    # "km" (metric) or "mi" (imperial).
+    "units": "mi",
     # Category toggles
     "daily_stats_enabled": True,
     "sleep_enabled": True,

@@ -6,6 +6,7 @@
   <title>Analytics — Garmin Health Coach</title>
   <link rel="stylesheet" href="/static/style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="/static/units.js"></script>
   <style>
     .an-wrap { max-width: 1140px; margin: 0 auto; padding: 24px; padding-top: calc(var(--header-h, 56px) + 20px); }
     .an-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; }
@@ -54,6 +55,11 @@
     .cm-item { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #4a4f57; }
     .cm-badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; color: #fff; font-weight: 600; }
     .an-hint { font-size: 12px; color: #8a8f98; background: #f7f8fa; border: 1px solid #ececf0; border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; }
+    .an-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+    .u-seg { display: inline-flex; border: 1px solid #d7dae0; border-radius: 8px; overflow: hidden; flex: none; }
+    .u-seg button { border: 0; background: #fff; color: #4a4f57; padding: 7px 13px; font-size: 12.5px; cursor: pointer; }
+    .u-seg button + button { border-left: 1px solid #d7dae0; }
+    .u-seg button.active { background: #2b2f36; color: #fff; }
   </style>
 </head>
 <body>
@@ -72,7 +78,10 @@
   </header>
 
   <div class="an-wrap">
-    <div class="an-tabs" id="an-tabs"></div>
+    <div class="an-topbar">
+      <div class="an-tabs" id="an-tabs"></div>
+      <div id="an-units"></div>
+    </div>
     <div id="an-body"><div class="an-state">Loading analytics…</div></div>
   </div>
 
@@ -132,6 +141,9 @@ function renderHeatmap(d) {
   if (!d.metrics[hmMetric]) hmMetric = 'distance';
 
   const meta = d.metrics[hmMetric];
+  const isDist = hmMetric === 'distance';
+  const conv = v => (isDist ? Units.fromKm(v) : v);
+  const unitLabel = isDist ? Units.label() : meta.unit;
   const vals = d.values[hmMetric] || {};
   const yearVals = Object.entries(vals).filter(([k]) => k.startsWith(hmYear));
   const max = yearVals.length ? Math.max(...yearVals.map(([, v]) => v)) : 0;
@@ -163,7 +175,7 @@ function renderHeatmap(d) {
     }
     const types = (d.types[iso] || []).map(t => `${t[1]}× ${t[0]}`).join(', ');
     const tip = v
-      ? `${iso}: ${fmtVal(v, hmMetric)} ${meta.unit}${types ? ' — ' + types : ''}`
+      ? `${iso}: ${fmtVal(conv(v), hmMetric)} ${unitLabel}${types ? ' — ' + types : ''}`
       : (inYear ? `${iso}: rest` : '');
     cells += `<div class="hm-cell ${v ? 'has' : ''}" style="background:${inYear ? shade(v) : 'transparent'}" title="${tip}"></div>`;
   }
@@ -190,7 +202,7 @@ function renderHeatmap(d) {
     </div>`;
 
   const stats = `<div class="an-stats">
-      ${stat(fmtVal(total, hmMetric) + ' ' + meta.unit, hmMetric === 'readiness' ? 'sum (n/a)' : hmYear + ' total')}
+      ${stat(fmtVal(conv(total), hmMetric) + ' ' + unitLabel, hmMetric === 'readiness' ? 'sum (n/a)' : hmYear + ' total')}
       ${stat(yearVals.length, 'days with data')}
       ${stat(d.streaks.longest + 'd', 'longest streak')}
       ${stat(d.streaks.current + 'd', 'current streak')}
@@ -404,7 +416,7 @@ function renderEfficiency(d) {
        ${stat(Math.max(...d.points.map(p => p.y)).toFixed(2), 'best m/beat')}
      </div>
      <div class="an-canvas-box tall"><canvas id="c-eff"></canvas></div>
-     <div class="an-note"><strong>${dir}</strong> The line is a 30-day rolling median, which ignores one-off outliers. Long runs (15 km+) are drawn larger.</div>`);
+     <div class="an-note"><strong>${dir}</strong> The line is a 30-day rolling median, which ignores one-off outliers. Long runs (${Units.fmtFromKm(15, 0)}+) are drawn larger.</div>`);
 
   charts.push(new Chart($('c-eff'), {
     data: {
@@ -432,7 +444,8 @@ function renderEfficiency(d) {
             label: ctx => {
               const m = ctx.raw._m;
               if (!m) return `Median ${ctx.parsed.y}`;
-              return [`${m.name} — ${m.km} km`, `${m.y} m/beat`, `Pace ${m.pace} /km · HR ${m.hr}`];
+              return [`${m.name} — ${Units.fmtFromKm(m.km)}`, `${m.y} m/beat`,
+                      `Pace ${Units.fmtPace(m.pace)} · HR ${m.hr}`];
             },
           },
         },
@@ -461,7 +474,7 @@ function renderPaceCurve(d) {
   const rows = d.buckets.map(b => `<tr>
       <td style="padding:6px 12px 6px 0;font-weight:600">${b.label}${b.untested ? ' <span title="Slower than your ' + b.untested_vs + ', so this distance has never been run flat out" style="color:#c8860d;font-weight:400">*</span>' : ''}</td>
       <td style="padding:6px 12px 6px 0">${b.best ? fmtTime(b.best.seconds) : '–'}</td>
-      <td style="padding:6px 12px 6px 0;color:#8a8f98">${b.best_pace ? b.best_pace.toFixed(2) + ' /km' : '–'}</td>
+      <td style="padding:6px 12px 6px 0;color:#8a8f98">${b.best_pace ? Units.fmtPace(b.best_pace) : '–'}</td>
       <td style="padding:6px 12px 6px 0;color:#8a8f98">${b.best ? b.best.date : ''}</td>
       <td style="padding:6px 12px 6px 0">${b.recent ? fmtTime(b.recent.seconds) : '–'}</td>
     </tr>`).join('');
@@ -482,7 +495,7 @@ function renderPaceCurve(d) {
          <th style="text-align:left">Last 12 mo</th>
        </tr>${rows}
      </table>
-     <div class="an-note">Efforts are normalised to the exact race distance, so a 5.4 km run counts toward the 5K mark. Physically impossible records are filtered out.${untested.length ? ` <br><span style="color:#c8860d">*</span> ${untested.join(', ')} look slow only because you have never run them flat out — those distances appear in your history as warm-ups, not efforts. The dashed projection shows what you should be capable of.` : ''}</div>`);
+     <div class="an-note">Efforts are normalised to the exact race distance, so a ${Units.fmtFromKm(5.4)} run counts toward the 5K mark. Physically impossible records are filtered out.${untested.length ? ` <br><span style="color:#c8860d">*</span> ${untested.join(', ')} look slow only because you have never run them flat out — those distances appear in your history as warm-ups, not efforts. The dashed projection shows what you should be capable of.` : ''}</div>`);
 
   const labels = d.buckets.map(b => b.label);
   charts.push(new Chart($('c-pace'), {
@@ -490,13 +503,13 @@ function renderPaceCurve(d) {
       labels,
       datasets: [
         { type: 'line', label: 'All-time best pace',
-          data: d.buckets.map(b => b.best_pace), borderColor: '#4285f4',
+          data: d.buckets.map(b => Units.pace(b.best_pace)), borderColor: '#4285f4',
           backgroundColor: 'rgba(66,133,244,.1)', pointRadius: 4, tension: .3, spanGaps: true, fill: false },
         { type: 'line', label: 'Last 12 months',
-          data: d.buckets.map(b => b.recent_pace), borderColor: '#ea4335',
+          data: d.buckets.map(b => Units.pace(b.recent_pace)), borderColor: '#ea4335',
           pointRadius: 4, tension: .3, spanGaps: true, fill: false },
         { type: 'line', label: 'Projected from best effort',
-          data: d.projections.map(p => p.pace), borderColor: '#9aa0a8',
+          data: d.projections.map(p => Units.pace(p.pace)), borderColor: '#9aa0a8',
           borderDash: [6, 4], pointRadius: 0, tension: .3, fill: false },
       ],
     },
@@ -510,11 +523,11 @@ function renderPaceCurve(d) {
           if (p == null) return `${ctx.dataset.label}: no data`;
           const mins = Math.floor(p), secs = Math.round((p - mins) * 60);
           const t = ctx.datasetIndex === 0 ? b.best : ctx.datasetIndex === 1 ? b.recent : d.projections[ctx.dataIndex];
-          return `${ctx.dataset.label}: ${mins}:${String(secs).padStart(2, '0')} /km` + (t?.seconds ? ` (${fmtTime(t.seconds)})` : '');
+          return `${ctx.dataset.label}: ${mins}:${String(secs).padStart(2, '0')} /${Units.label()}` + (t?.seconds ? ` (${fmtTime(t.seconds)})` : '');
         } } },
       },
       scales: {
-        y: { title: { display: true, text: 'Pace (min/km) — lower is faster' }, reverse: true,
+        y: { title: { display: true, text: Units.paceLabel() + ' — lower is faster' }, reverse: true,
              ticks: { callback: v => `${Math.floor(v)}:${String(Math.round((v % 1) * 60)).padStart(2, '0')}` },
              grid: { color: '#f0f1f4' } },
         x: { grid: { display: false } },
@@ -638,6 +651,7 @@ async function load(force) {
 }
 
 renderTabs();
+$('an-units').appendChild(Units.segment(() => render()));
 load();
 </script>
 </body>

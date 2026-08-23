@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Weekly Review — Garmin Health Coach</title>
   <link rel="stylesheet" href="/static/style.css" />
+  <script src="/static/units.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
   <style>
     .r-wrap { max-width: 820px; margin: 0 auto; padding: 24px; padding-top: calc(var(--header-h,56px) + 20px); }
@@ -45,16 +46,20 @@
 
   <script>
     const S = [
-      ["activities","Activities"],["runs","Runs"],["run_km","Run km"],
+      ["activities","Activities"],["runs","Runs"],["run_km",null],
       ["active_minutes","Active min"],["avg_steps","Steps/day"],
       ["avg_resting_hr","Rest HR"],["avg_stress","Stress"],
       ["avg_sleep_hours","Sleep h"],["avg_sleep_score","Sleep score"],
       ["avg_readiness","Readiness"],
     ];
     function statBlock(st) {
-      return '<div class="r-stats">' + S.filter(([k]) => st[k] != null).map(([k,lbl]) =>
-        '<div class="r-stat"><div class="k">'+lbl+'</div><div class="v">'+st[k]+'</div></div>').join("") +
-        '</div>';
+      // run_km is stored canonically in km and converted for display.
+      return '<div class="r-stats">' + S.filter(([k]) => st[k] != null).map(([k,lbl]) => {
+        const isDist = k === "run_km";
+        const label = isDist ? "Run " + Units.label() : lbl;
+        const value = isDist ? Units.fromKm(st[k]).toFixed(1) : st[k];
+        return '<div class="r-stat"><div class="k">'+label+'</div><div class="v">'+value+'</div></div>';
+      }).join("") + '</div>';
     }
     function card(r) {
       return '<div class="r-card">'+
@@ -83,6 +88,7 @@
         b.disabled = false; b.textContent = "✨ Generate this week's review";
       }
     };
+    Units.onChange(() => load());
     load();
   </script>
 </body>

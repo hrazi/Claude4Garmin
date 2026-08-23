@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Training Log — Garmin Health Coach</title>
   <link rel="stylesheet" href="/static/style.css" />
+  <script src="/static/units.js"></script>
   <style>
     /* ── Training Log page ───────────────────────────────────────────── */
     .tl-wrap { max-width: 1200px; margin: 0 auto; padding: 20px 24px 80px; padding-top: calc(var(--header-h, 56px) + 20px); }
@@ -152,7 +153,7 @@
     const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
     let ALL_ACTIVITIES = [];
-    let units  = localStorage.getItem("trainingLogUnits")  || "mi";
+    let units  = Units.get();
     let filter = localStorage.getItem("trainingLogFilter") || "runs";
 
     // ── helpers ──────────────────────────────────────────────────────
@@ -390,13 +391,21 @@
     });
     document.getElementById("seg-units").addEventListener("click", e => {
       const b = e.target.closest("button"); if (!b) return;
-      units = b.dataset.units; setSeg("seg-units", "units", units, "trainingLogUnits"); render();
+      Units.set(b.dataset.units);
     });
     document.getElementById("btn-refresh").addEventListener("click", () => load(true));
 
     // apply persisted control state, then load
     setSeg("seg-filter", "filter", filter, "trainingLogFilter");
     setSeg("seg-units", "units", units, "trainingLogUnits");
+
+    // Unit changes may originate here, on another page, or in another tab.
+    Units.onChange(u => {
+      units = u;
+      setSeg("seg-units", "units", units, "trainingLogUnits");
+      render();
+    });
+
     load(false);
   </script>
 </body>

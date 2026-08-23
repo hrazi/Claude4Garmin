@@ -91,10 +91,15 @@ def build_week_stats(health_data: dict, activities: list[dict],
     }
 
 
-def _stats_text(st: dict) -> str:
+def _stats_text(st: dict, units: str = "km") -> str:
+    # Stats are stored canonically in km; only the wording shown to the AI
+    # switches, so historic reviews stay comparable.
+    dist = st["run_km"]
+    if units == "mi":
+        dist = round(dist * 1000 / 1609.344, 1)
     lines = [f"Week {st['start']} to {st['end']}:"]
     lines.append(f"  Training: {st['activities']} activities ({st['runs']} runs), "
-                 f"{st['run_km']} km running, {st['active_minutes']} active min")
+                 f"{dist} {units} running, {st['active_minutes']} active min")
     if st.get("avg_steps") is not None:      lines.append(f"  Steps/day avg: {st['avg_steps']}")
     if st.get("avg_resting_hr") is not None: lines.append(f"  Resting HR avg: {st['avg_resting_hr']} bpm")
     if st.get("avg_stress") is not None:     lines.append(f"  Stress avg: {st['avg_stress']}")
@@ -125,7 +130,7 @@ PROMPT = (
 
 
 def generate(health_data: dict, activities: list[dict], nutrition_data: dict,
-             ask, start: date | None = None) -> dict:
+             ask, start: date | None = None, units: str = "km") -> dict:
     """
     Build week stats, ask the AI for a review, persist and return the review.
     `ask` is a callable(prompt: str) -> str (provider-agnostic).
@@ -133,7 +138,7 @@ def generate(health_data: dict, activities: list[dict], nutrition_data: dict,
     start = start or week_start_for()
     end = start + timedelta(days=6)
     stats = build_week_stats(health_data, activities, nutrition_data, start, end)
-    text = ask(PROMPT.format(stats=_stats_text(stats))).strip()
+    text = ask(PROMPT.format(stats=_stats_text(stats, units))).strip()
     review = {
         "week_start": start.isoformat(),
         "week_end": end.isoformat(),

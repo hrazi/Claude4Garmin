@@ -51,12 +51,20 @@ def save_goals(goals: list[dict]) -> None:
 def add_goal(data: dict) -> dict:
     gtype = (data.get("type") or "").strip()
     meta = GOAL_TYPES.get(gtype, {})
+    unit = (data.get("unit") or meta.get("unit") or "").strip()
+    target = _num(data.get("target"))
+    # Distance goals are stored canonically in km and converted for display, so
+    # switching the display unit never silently changes what a goal means.
+    if gtype == "weekly_distance":
+        if unit == "mi" and target is not None:
+            target = round(target * 1609.344 / 1000, 2)
+        unit = "km"
     goal = {
         "id": uuid.uuid4().hex[:12],
         "type": gtype,
         "label": (data.get("label") or "").strip(),
-        "target": _num(data.get("target")),
-        "unit": (data.get("unit") or meta.get("unit") or "").strip(),
+        "target": target,
+        "unit": unit,
         "date": (data.get("date") or "").strip(),
         "direction": (data.get("direction") or meta.get("direction") or "hit").strip(),
         "created": date.today().isoformat(),
@@ -150,17 +158,25 @@ def compute_progress(goals: list[dict], health_data: dict, activities: list[dict
     return out
 
 
-def format_for_prompt(progress: list[dict]) -> str:
+def format_for_prompt(progress: list[dict], units: str = "km") -> str:
     """Render goal progress as a compact block for the coach's system context."""
     if not progress:
         return ""
+
+    def show(g: dict, value: float) -> str:
+        # Distance goals are stored in km; speak to the athlete in their unit.
+        unit = g.get("unit", "")
+        if g.get("type") == "weekly_distance" and units == "mi":
+            return f"{round(value * 1000 / 1609.344, 1):g}mi"
+        return f"{value:g}{unit}"
+
     lines = ["ACTIVE GOALS (keep advice aligned to these):"]
     for g in progress:
         bits = [g.get("label") or g.get("type", "goal")]
         if g.get("target") is not None:
-            bits.append(f"target {g['target']:g}{g.get('unit','')}")
+            bits.append("target " + show(g, g["target"]))
         if g.get("current") is not None:
-            bits.append(f"current {g['current']:g}{g.get('unit','')}")
+            bits.append("current " + show(g, g["current"]))
         if g.get("percent") is not None:
             bits.append(f"{g['percent']}%")
         if g.get("days_left") is not None:

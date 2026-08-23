@@ -300,6 +300,39 @@ def _local_wall_clock(ms) -> Optional[str]:
         return None
 
 
+METERS_PER_MILE = 1609.344
+METERS_PER_KM = 1000.0
+
+
+def _dist_unit(settings: dict | None) -> str:
+    """Distance unit the athlete reads on screen: 'mi' or 'km'."""
+    return "mi" if (settings or {}).get("units", "mi") == "mi" else "km"
+
+
+def _fmt_distance(meters, settings: dict | None, decimals: int = 1,
+                  space: bool = False) -> str:
+    """Format metres in the athlete's chosen unit, e.g. '6.2 mi'."""
+    if not meters:
+        return "-"
+    unit = _dist_unit(settings)
+    per = METERS_PER_MILE if unit == "mi" else METERS_PER_KM
+    return f"{meters / per:.{decimals}f}{' ' if space else ''}{unit}"
+
+
+def _fmt_pace(speed_mps, settings: dict | None) -> Optional[str]:
+    """Format a speed as pace in the athlete's chosen unit, e.g. '8:12/mi'."""
+    if not speed_mps or speed_mps <= 0:
+        return None
+    unit = _dist_unit(settings)
+    per = METERS_PER_MILE if unit == "mi" else METERS_PER_KM
+    pace_min = (per / speed_mps) / 60
+    minutes = int(pace_min)
+    seconds = int(round((pace_min - minutes) * 60))
+    if seconds == 60:
+        minutes, seconds = minutes + 1, 0
+    return f"{minutes}:{seconds:02d}/{unit}"
+
+
 def _seconds_to_hm(seconds: Optional[int]) -> str:
     """Convert a seconds value to a human-readable 'Xh Ym' string."""
     if seconds is None:
@@ -892,7 +925,7 @@ def format_health_summary(
         _col("Stress", "stress_avg", "metric_stress", lambda d, **_: str(d["stress_avg"]) if d.get("stress_avg") else "-")
         _col("BB", "body_battery", "metric_body_battery", lambda d, **_: str(d["body_battery"]) if d.get("body_battery") else "-")
         _col("RHR", "resting_hr", "metric_resting_hr", lambda d, **_: str(d["resting_hr"]) if d.get("resting_hr") else "-")
-        _col("Dist", "distance_m", "metric_distance", lambda d, **_: f"{d['distance_m']/1000:.1f}km" if d.get("distance_m") else "-")
+        _col("Dist", "distance_m", "metric_distance", lambda d, **_: _fmt_distance(d.get("distance_m"), s))
         if s.get("hrv_enabled", True):
             cols.append(("HRV", lambda d, h=None, **_: (
                 str(int(h['last_night_avg'])) + (f"({h['status'][:3].title()})" if h.get("status") else "")
@@ -969,7 +1002,7 @@ def format_health_summary(
                     dur_s = int(dur_secs % 60)
                     parts.append(f"{dur_m}:{dur_s:02d}")
                 if act.get("distance_meters"):
-                    parts.append(f"{act['distance_meters'] / 1000:.1f} km")
+                    parts.append(_fmt_distance(act["distance_meters"], s, space=True))
                 if act.get("avg_hr"):
                     parts.append(f"avg HR {int(act['avg_hr'])} bpm")
                 if act.get("calories"):
@@ -982,12 +1015,9 @@ def format_health_summary(
                         parts.append(f"{int(act['avg_cadence'])} rpm")
                 # Running: derive pace from avg_speed_mps
                 elif act_type_is(act, "running", "run", "trail", "walk"):
-                    spd = act.get("avg_speed_mps")
-                    if spd and spd > 0:
-                        pace_min_km = (1000 / spd) / 60
-                        pm = int(pace_min_km)
-                        ps = int((pace_min_km - pm) * 60)
-                        parts.append(f"{pm}:{ps:02d}/km")
+                    pace = _fmt_pace(act.get("avg_speed_mps"), s)
+                    if pace:
+                        parts.append(pace)
                 # Elevation for any outdoor activity
                 elev = act.get("elevation_gain")
                 if elev and elev > 0:

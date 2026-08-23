@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Goals — Garmin Health Coach</title>
   <link rel="stylesheet" href="/static/style.css" />
+  <script src="/static/units.js"></script>
   <style>
     .g-wrap { max-width: 900px; margin: 0 auto; padding: 24px; padding-top: calc(var(--header-h,56px) + 20px); }
     .g-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; gap:12px; flex-wrap:wrap; }
@@ -67,7 +68,7 @@
         <option value="race">Race / event</option>
       </select>
       <label>Description</label>
-      <input id="f-label" placeholder="e.g. Build to 50 km/week" />
+      <input id="f-label" placeholder="e.g. Build to 30 per week" />
       <label>Target value</label>
       <input id="f-target" type="number" step="any" placeholder="e.g. 50" />
       <label>Unit</label>
@@ -82,7 +83,8 @@
   </div>
 
   <script>
-    const UNIT_BY_TYPE = { weekly_distance:"km", weight:"kg", steps:"steps", sleep:"h", rhr:"bpm", race:"" };
+    const unitFor = t => (t === "weekly_distance" ? Units.label() : UNIT_BY_TYPE[t] || "");
+    const UNIT_BY_TYPE = { weight:"kg", steps:"steps", sleep:"h", rhr:"bpm", race:"" };
     const DIR_BY_TYPE  = { weekly_distance:"increase", weight:"decrease", steps:"increase", sleep:"increase", rhr:"decrease", race:"hit" };
 
     function esc(s){return (s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
@@ -93,8 +95,12 @@
       if (!goals.length) { list.innerHTML = '<div class="g-empty">No goals yet. Add one to make the coach goal-aware.</div>'; return; }
       list.innerHTML = goals.map(g => {
         const pct = g.percent == null ? null : g.percent;
-        const cur = g.current == null ? "—" : (Math.round(g.current*10)/10) + (g.unit||"");
-        const tgt = g.target == null ? "" : (g.target) + (g.unit||"");
+        // Distance goals are stored in km; show them in the athlete's unit.
+        const isDist = g.type === "weekly_distance";
+        const conv = v => isDist ? Units.fromKm(v) : v;
+        const u = isDist ? Units.label() : (g.unit || "");
+        const cur = g.current == null ? "—" : (Math.round(conv(g.current)*10)/10) + u;
+        const tgt = g.target == null ? "" : (Math.round(conv(g.target)*10)/10) + u;
         const days = g.days_left == null ? "" : (g.days_left >= 0 ? g.days_left+" days left" : Math.abs(g.days_left)+" days ago");
         const done = g.status === "achieved";
         return '<div class="g-card">'+
@@ -115,9 +121,13 @@
     document.getElementById("g-add").onclick = () => modal.classList.add("open");
     document.getElementById("f-cancel").onclick = () => modal.classList.remove("open");
     document.getElementById("f-type").onchange = e => {
-      document.getElementById("f-unit").value = UNIT_BY_TYPE[e.target.value] || "";
+      document.getElementById("f-unit").value = unitFor(e.target.value);
     };
-    document.getElementById("f-unit").value = UNIT_BY_TYPE["weekly_distance"];
+    document.getElementById("f-unit").value = unitFor("weekly_distance");
+    Units.onChange(() => {
+      document.getElementById("f-unit").value = unitFor(document.getElementById("f-type").value);
+      loadGoals();
+    });
     document.getElementById("f-save").onclick = async () => {
       const type = document.getElementById("f-type").value;
       const body = {

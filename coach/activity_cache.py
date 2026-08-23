@@ -159,14 +159,15 @@ def format_power_zones(zones_data) -> str:
     return " | ".join(parts) if parts else ""
 
 
-def format_splits(splits_data) -> str:
+def format_splits(splits_data, units: str = "km") -> str:
     """
     Format lap splits from get_activity_splits() response.
 
-    Output (one line per lap):
+    Output (one line per lap, in the athlete's chosen unit):
       Lap 1: 5.0 km | 25:30 | 5:06/km | avg HR 148 bpm
       Lap 2: 5.0 km | 26:15 | 5:15/km | avg HR 152 bpm
     """
+    per_unit = 1609.344 if units == "mi" else 1000.0
     if not splits_data:
         return ""
 
@@ -191,7 +192,7 @@ def format_splits(splits_data) -> str:
 
         dist = lap.get("distance") or lap.get("distanceInMeters")
         if dist:
-            parts.append(f"{dist / 1000:.2f} km")
+            parts.append(f"{dist / per_unit:.2f} {units}")
 
         dur = lap.get("duration") or lap.get("elapsedDuration") or lap.get("movingDuration")
         if dur:
@@ -199,15 +200,15 @@ def format_splits(splits_data) -> str:
             parts.append(f"{m}:{s:02d}")
 
         # Pace (if available or derivable from distance+duration)
-        pace_secs_km = lap.get("averagePaceInMinutesPerKilometer")
-        if pace_secs_km:
-            pm = int(pace_secs_km)
-            ps = int((pace_secs_km - pm) * 60)
-            parts.append(f"{pm}:{ps:02d}/km")
+        pace_per_km = lap.get("averagePaceInMinutesPerKilometer")
+        pace = None
+        if pace_per_km:
+            pace = pace_per_km * (per_unit / 1000.0)
         elif dist and dur and dist > 0:
-            pace = (dur / 60) / (dist / 1000)
+            pace = (dur / 60) / (dist / per_unit)
+        if pace:
             pm, ps_f = divmod(pace, 1)
-            parts.append(f"{int(pm)}:{int(ps_f * 60):02d}/km")
+            parts.append(f"{int(pm)}:{int(ps_f * 60):02d}/{units}")
 
         avg_hr = lap.get("averageHR") or lap.get("averageHeartRate")
         if avg_hr:
@@ -338,7 +339,7 @@ def format_activity_detail_for_prompt(activity: dict, detail: dict, settings: di
 
     # Lap Splits (non-strength activities)
     if not is_strength and settings.get("activity_detail_splits", True) and not detail.get("splits_error"):
-        splits_str = format_splits(detail.get("splits"))
+        splits_str = format_splits(detail.get("splits"), settings.get("units", "mi"))
         if splits_str:
             lines.append("Lap Splits:")
             lines.append(splits_str)

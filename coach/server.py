@@ -121,7 +121,7 @@ def _extra_context_notes(hd: dict, settings: dict) -> str:
         parts.append(ins.format_for_prompt(alerts))
     progress = gl.compute_progress(gl.load_goals(), hd, (hd or {}).get("activities", []))
     if progress:
-        parts.append(gl.format_for_prompt(progress))
+        parts.append(gl.format_for_prompt(progress, (settings or {}).get("units", "mi")))
     return "\n\n".join(parts)
 
 
@@ -701,6 +701,33 @@ async def analytics_page(request: Request):
     return templates.TemplateResponse(request, "analytics.html", {"request": request})
 
 
+@app.get("/api/units")
+async def api_get_units():
+    """Report the saved unit preference so a fresh browser adopts it."""
+    return JSONResponse({"units": sm.load_settings().get("units", "mi")})
+
+
+@app.post("/api/units")
+async def api_set_units(request: Request):
+    """
+    Persist the distance-unit preference so the coach's health summary uses the
+    same units as the UI. Rebuilds the coach so the change takes effect at once.
+    """
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    units = "km" if body.get("units") == "km" else "mi"
+
+    settings = sm.load_settings()
+    if settings.get("units") != units:
+        settings["units"] = units
+        sm.save_settings(settings)
+        _rebuild_coach()
+    return JSONResponse({"units": units})
+
+
 @app.get("/api/analytics")
 async def api_analytics(view: str = "all", days: int = 90):
     """
@@ -879,6 +906,8 @@ async def api_weekly_review_generate():
             (health_data or {}).get("activities", []),
             nutrition_data,
             _ephemeral_ask,
+            None,
+            sm.load_settings().get("units", "mi"),
         )
         return JSONResponse({"ok": True, "review": review})
     except Exception as e:
@@ -1345,6 +1374,7 @@ async def api_save_data_settings(request: Request):
     existing = sm.load_settings()
     existing.update({
         "days_back": int(form.get("days_back", 7)),
+        "units": "km" if form.get("units") == "km" else "mi",
         "daily_stats_enabled": "daily_stats_enabled" in form,
         "sleep_enabled": "sleep_enabled" in form,
         "activities_enabled": "activities_enabled" in form,
