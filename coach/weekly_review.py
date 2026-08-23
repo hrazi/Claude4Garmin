@@ -13,6 +13,7 @@ import json
 from datetime import date, datetime, timedelta
 from statistics import mean
 
+from . import checkin as ci
 from .paths import user_data_dir
 
 STORE = user_data_dir() / "weekly_reviews.json"
@@ -88,6 +89,8 @@ def build_week_stats(health_data: dict, activities: list[dict],
         "avg_sleep_score": avg(sleep_score),
         "avg_readiness": avg(ready),
         "nutrition": nut or None,
+        # Behaviour and subjective state: the half of coaching the watch misses.
+        "checkin": ci.week_summary(start, end),
     }
 
 
@@ -111,6 +114,20 @@ def _stats_text(st: dict, units: str = "km") -> str:
         n = st["nutrition"]
         lines.append(f"  Nutrition avg: {n.get('avg_calories','?')} kcal, "
                      f"{n.get('avg_protein','?')} g protein")
+
+    c = st.get("checkin") or {}
+    if c.get("habit_adherence") is not None:
+        lines.append(f"  Habit adherence: {c['habit_adherence']}%")
+        for h in c.get("habits") or []:
+            lines.append(f"    - {h['name']}: {h['completed']}/{h['expected']}"
+                         + (f" (streak {h['streak']})" if h.get("streak") else ""))
+    subjective = [f"{f} {c['avg_' + f]}/5"
+                  for f in ci.JOURNAL_FIELDS if c.get("avg_" + f) is not None]
+    if subjective:
+        lines.append(f"  Subjective ({c.get('checkins', 0)} check-ins): "
+                     + ", ".join(subjective) + " (soreness: higher is worse)")
+    for note in (c.get("notes") or [])[:3]:
+        lines.append(f'    Journal: "{note}"')
     return "\n".join(lines)
 
 

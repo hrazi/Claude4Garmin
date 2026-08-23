@@ -36,6 +36,7 @@
       <a href="/" class="btn-ghost">💬 <span class="btn-text">Coach</span></a>
       <a href="/training-log" class="btn-ghost">📖 <span class="btn-text">Training Log</span></a>
       <a href="/analytics" class="btn-ghost">🔬 <span class="btn-text">Analytics</span></a>
+      <a href="/daily" class="btn-ghost">📅 <span class="btn-text">Daily</span></a>
       <a href="/goals" class="btn-ghost">🎯 <span class="btn-text">Goals</span></a>
       <a href="/review" class="btn-ghost">📝 <span class="btn-text">Review</span></a>
       <a href="/settings" class="btn-ghost">⚙ <span class="btn-text">Settings</span></a>
@@ -79,6 +80,10 @@
       { key: "hrv",          label: "HRV",                color: "#d81b60", axis: "y" },
       { key: "body_battery", label: "Body Battery",       color: "#7cb342", axis: "y" },
       { key: "weight",       label: "Weight",             color: "#8d6e63", axis: "y" },
+      { key: "mood",         label: "Mood",               color: "#f9a825", axis: "y2" },
+      { key: "energy",       label: "Energy",             color: "#c62828", axis: "y2" },
+      { key: "motivation",   label: "Motivation",         color: "#546e7a", axis: "y2" },
+      { key: "soreness",     label: "Soreness",           color: "#6a1b9a", axis: "y2" },
     ];
     let DATA = null, chart = null;
     let range = parseInt(localStorage.getItem("chartsRange") || "30", 10);
@@ -123,6 +128,8 @@
         });
       }
       const needSteps = active.includes("steps");
+      const RATINGS = ["mood", "energy", "motivation", "soreness"];
+      const needRating = RATINGS.some(k => active.includes(k));
       const cfg = {
         type: "line",
         data: { labels: dates, datasets },
@@ -132,9 +139,15 @@
           plugins: { legend: { display: false } },
           scales: {
             x: { grid: { display: false }, ticks: { maxTicksLimit: 10, autoSkip: true } },
-            y:  { position: "left" },
+            y:  { position: "left", display: active.some(k => {
+                    const m = METRICS.find(x => x.key === k);
+                    return m && m.axis === "y";
+                  }) },
             y1: { position: "right", title: { display: needSteps, text: "Steps" },
                   display: needSteps, grid: { drawOnChartArea: false }, beginAtZero: true },
+            y2: { position: "right", title: { display: needRating, text: "Rating (1-5)" },
+                  display: needRating, grid: { drawOnChartArea: false },
+                  min: 1, max: 5, ticks: { stepSize: 1 } },
             yAct: { display: false, min: 0, max: 1 },
           },
         },

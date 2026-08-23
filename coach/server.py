@@ -50,6 +50,8 @@ from . import insights as ins
 from . import goals as gl
 from . import weekly_review as wr
 from . import analytics as an
+from . import checkin as ci
+from . import fueling as fl
 from .garmin_client import get_garmin_client, fetch_health_data, fetch_activity_history, format_health_summary, format_trend_summary, fill_readiness_estimates, backfill_sleep_times
 from .claude_client import ClaudeCoach
 from .paths import bundle_dir, user_data_dir
@@ -122,6 +124,14 @@ def _extra_context_notes(hd: dict, settings: dict) -> str:
     progress = gl.compute_progress(gl.load_goals(), hd, (hd or {}).get("activities", []))
     if progress:
         parts.append(gl.format_for_prompt(progress, (settings or {}).get("units", "mi")))
+    # Habits and subjective check-ins: what the athlete chose to do and how
+    # they actually felt, which the watch cannot see.
+    habits = ci.format_for_prompt()
+    if habits:
+        parts.append(habits)
+    fuel = fl.format_for_prompt(fl.build(hd, nutrition_data, settings))
+    if fuel:
+        parts.append(fuel)
     return "\n\n".join(parts)
 
 
@@ -658,6 +668,11 @@ def _build_chart_series() -> dict:
         series["body_battery"].append(s.get("body_battery"))
         series["weight"].append(bd.get("weight"))
 
+    # Subjective check-in ratings, aligned onto the same date axis (issue #20).
+    journal = ci.entries_between(dates[0], dates[-1]) if dates else {}
+    for field in ci.JOURNAL_FIELDS:
+        series[field] = [(journal.get(d) or {}).get(field) for d in dates]
+
     def rolling(vals, window=7):
         out = []
         for i in range(len(vals)):
@@ -667,7 +682,8 @@ def _build_chart_series() -> dict:
         return out
 
     rolling_keys = ("steps", "stress", "resting_hr", "readiness",
-                    "sleep_score", "sleep_hours", "hrv", "body_battery", "weight")
+                    "sleep_score", "sleep_hours", "hrv", "body_battery", "weight",
+                    *ci.JOURNAL_FIELDS)
     roll = {k: rolling(series[k]) for k in rolling_keys}
 
     activity_days = sorted({
@@ -869,6 +885,84 @@ async def api_goals_delete(goal_id: str):
     gl.delete_goal(goal_id)
     _rebuild_coach()
     return JSONResponse({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Daily check-in: habits (#19), journal (#20) and fuelling (#21)
+# ---------------------------------------------------------------------------
+
+@app.get("/daily", response_class=HTMLResponse)
+async def daily_page(request: Request):
+    if not garmin_connected:
+        return RedirectResponse("/settings")
+    return templates.TemplateResponse(request, "daily.html", {
+        "request": request,
+        "journal_fields": ci.JOURNAL_FIELDS,
+        "suggested_habits": ci.SUGGESTED_HABITS,
+    })
+
+
+@app.get("/api/checkin")
+async def api_checkin_get(date: str = "", days: int = 30):
+    """Today's entry plus habit streaks and the recent completion grid."""
+    stats = ci.habit_stats(days=max(7, min(days, 365)))
+    entry = ci.get_entry(date or None)
+    return JSONResponse({"entry": entry, **stats})
+
+
+@app.post("/api/checkin")
+async def api_checkin_save(request: Request):
+    """
+    Merge a partial check-in. The coach is rebuilt so advice reflects what was
+    just logged rather than the state at server start.
+    """
+    body = await request.json()
+    entry = ci.save_entry(body.get("date") or "", body)
+    _rebuild_coach()
+    return JSONResponse({"ok": True, "entry": entry})
+
+
+@app.get("/api/checkin/journal")
+async def api_checkin_journal(days: int = 90, lag: int = 1):
+    """Subjective series plus their correlation against biometrics."""
+    days = max(14, min(days, 365))
+    return JSONResponse({
+        "series": ci.journal_series(days),
+        "correlations": ci.journal_correlations(
+            health_data, days, lag=max(0, min(lag, 7))),
+    })
+
+
+@app.post("/api/habits")
+async def api_habits_add(request: Request):
+    habit = ci.add_habit(await request.json())
+    _rebuild_coach()
+    return JSONResponse({"ok": True, "habit": habit})
+
+
+@app.patch("/api/habits/{habit_id}")
+async def api_habits_update(habit_id: str, request: Request):
+    habit = ci.update_habit(habit_id, await request.json())
+    if not habit:
+        return JSONResponse({"ok": False, "error": "No such habit."}, status_code=404)
+    _rebuild_coach()
+    return JSONResponse({"ok": True, "habit": habit})
+
+
+@app.delete("/api/habits/{habit_id}")
+async def api_habits_delete(habit_id: str):
+    ci.delete_habit(habit_id)
+    _rebuild_coach()
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/fueling")
+async def api_fueling(days: int = 14):
+    """Pre, during and post fuelling targets plus under-fuelling flags."""
+    return JSONResponse(
+        fl.build(health_data, nutrition_data, sm.load_settings(),
+                 days=max(7, min(days, 90)))
+    )
 
 
 # ---------------------------------------------------------------------------

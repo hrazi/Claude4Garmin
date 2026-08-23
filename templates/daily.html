@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Daily — Garmin Health Coach</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    .d-wrap { max-width: 1000px; margin: 0 auto; padding: 24px; padding-top: calc(var(--header-h,56px) + 20px); }
+    .d-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; gap:12px; flex-wrap:wrap; }
+    .d-head h2 { margin:0; font-size:20px; color:#2b2f36; }
+    .d-date { font-size:13px; color:#8a8f98; }
+    .d-saved { font-size:12px; color:#2e9e5b; opacity:0; transition:opacity .25s; }
+    .d-saved.on { opacity:1; }
+
+    .d-tabs { display:flex; gap:6px; margin:16px 0 18px; flex-wrap:wrap; }
+    .d-tab { border:1px solid #d7dae0; background:#fff; color:#4a4f57; border-radius:999px;
+             padding:6px 15px; font-size:13px; cursor:pointer; }
+    .d-tab.active { background:#2b2f36; color:#fff; border-color:transparent; }
+
+    .d-card { background:#fff; border:1px solid #ececf0; border-radius:12px; padding:18px; margin-bottom:14px; }
+    .d-card h3 { margin:0 0 4px; font-size:15px; color:#2b2f36; }
+    .d-sub { font-size:12px; color:#9aa0a8; margin-bottom:14px; }
+    .d-empty { text-align:center; color:#8a8f98; padding:44px 20px; }
+    .d-note-txt { font-size:12px; color:#8a8f98; margin-top:12px; line-height:1.6; }
+
+    /* Habits */
+    .h-row { display:flex; align-items:center; gap:12px; padding:11px 0; border-bottom:1px solid #f2f3f5; }
+    .h-row:last-child { border-bottom:0; }
+    .h-check { width:26px; height:26px; border-radius:8px; border:2px solid #d7dae0; background:#fff;
+               cursor:pointer; flex-shrink:0; font-size:15px; line-height:1; color:#fff; padding:0; }
+    .h-check.done { background:#2e9e5b; border-color:#2e9e5b; }
+    .h-icon { font-size:17px; width:24px; text-align:center; flex-shrink:0; }
+    .h-main { flex:1; min-width:0; }
+    .h-name { font-size:14px; color:#2b2f36; font-weight:600; }
+    .h-meta { font-size:11px; color:#9aa0a8; margin-top:2px; }
+    .h-streak { font-size:13px; font-weight:700; color:#e2622c; white-space:nowrap; }
+    .h-streak.zero { color:#c9ccd2; font-weight:500; }
+    .h-grid { display:flex; gap:2px; margin-top:6px; }
+    .h-cell { width:9px; height:9px; border-radius:2px; background:#eef0f3; }
+    .h-cell.done { background:#2e9e5b; }
+    .h-cell.off  { background:#f7f8f9; }
+    .h-del { border:0; background:none; color:#c0c4cb; cursor:pointer; font-size:15px; padding:2px 4px; }
+    .h-del:hover { color:#b4442f; }
+    .h-add { display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
+    .h-add input, .h-add select { padding:8px 10px; border:1px solid #d7dae0; border-radius:8px; font-size:13px; }
+    .h-add input[type=text] { flex:1; min-width:150px; }
+    .h-add button { padding:8px 15px; border-radius:8px; border:1px solid #d7dae0; background:#fff; cursor:pointer; font-size:13px; }
+    .h-sugg { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+    .h-chip { border:1px dashed #d7dae0; background:#fafbfc; border-radius:999px; padding:4px 11px;
+              font-size:12px; color:#6b7078; cursor:pointer; }
+    .h-chip:hover { background:#f0f1f3; }
+    .h-adh { font-size:13px; color:#4a4f57; }
+
+    /* Journal */
+    .j-field { padding:12px 0; border-bottom:1px solid #f2f3f5; }
+    .j-label { font-size:13px; color:#2b2f36; font-weight:600; margin-bottom:8px; display:flex; gap:7px; align-items:center; }
+    .j-hint { font-size:11px; color:#9aa0a8; font-weight:400; }
+    .j-scale { display:flex; gap:6px; }
+    .j-dot { flex:1; max-width:56px; padding:9px 0; border:1px solid #d7dae0; background:#fff; border-radius:8px;
+             cursor:pointer; font-size:13px; color:#6b7078; }
+    .j-dot.on { background:#5566d8; border-color:#5566d8; color:#fff; font-weight:700; }
+    .j-dot.on.inv { background:#e2622c; border-color:#e2622c; }
+    .j-note { width:100%; box-sizing:border-box; min-height:76px; padding:10px; border:1px solid #d7dae0;
+              border-radius:8px; font-size:13px; font-family:inherit; resize:vertical; margin-top:8px; }
+
+    /* Correlations */
+    .c-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:14px; font-size:13px; color:#6b7078; }
+    .c-controls select { padding:6px 9px; border:1px solid #d7dae0; border-radius:8px; font-size:13px; }
+    .c-tbl { width:100%; border-collapse:collapse; font-size:12px; }
+    .c-tbl th { font-weight:600; color:#6b7078; padding:6px 4px; text-align:center; font-size:11px; }
+    .c-tbl th.rowh, .c-tbl td.rowh { text-align:left; white-space:nowrap; padding-right:10px; color:#2b2f36; font-weight:600; }
+    .c-tbl td { text-align:center; padding:5px 4px; }
+    .c-cell { display:block; border-radius:5px; padding:6px 2px; font-variant-numeric:tabular-nums; }
+    .c-find { font-size:13px; color:#4a4f57; line-height:1.75; }
+    .c-find b { color:#2b2f36; }
+
+    /* Fuelling */
+    .f-sess { border:1px solid #ececf0; border-radius:10px; padding:14px; margin-bottom:10px; }
+    .f-sess h4 { margin:0 0 2px; font-size:14px; color:#2b2f36; }
+    .f-tag { display:inline-block; font-size:10px; text-transform:uppercase; letter-spacing:.5px;
+             padding:2px 7px; border-radius:999px; margin-left:6px; vertical-align:middle; }
+    .f-tag.easy { background:#e8f4ea; color:#2e7d43; }
+    .f-tag.moderate { background:#fdf1e3; color:#a8641a; }
+    .f-tag.hard { background:#fbe9e6; color:#b4442f; }
+    .f-line { font-size:13px; color:#4a4f57; padding:5px 0; display:flex; gap:9px; }
+    .f-line span:first-child { color:#9aa0a8; min-width:58px; flex-shrink:0; }
+    .f-targets { display:flex; gap:22px; flex-wrap:wrap; margin-top:4px; }
+    .f-tgt .k { font-size:11px; color:#9aa0a8; }
+    .f-tgt .v { font-size:17px; font-weight:700; color:#2b2f36; }
+    .f-flag { background:#fdf6ee; border:1px solid #f0dcc2; border-radius:9px; padding:11px 13px;
+              margin-bottom:8px; font-size:13px; color:#7a5320; }
+    .f-missing { background:#f6f7f9; border:1px dashed #d7dae0; border-radius:9px; padding:11px 13px;
+                 font-size:12px; color:#6b7078; line-height:1.7; }
+    .chart-box { position:relative; height:300px; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-left"><span class="header-icon">📅</span><span class="header-title">Daily</span></div>
+    <div class="header-right">
+      <a href="/" class="btn-ghost">💬 <span class="btn-text">Coach</span></a>
+      <a href="/charts" class="btn-ghost">📈 <span class="btn-text">Charts</span></a>
+      <a href="/analytics" class="btn-ghost">🔬 <span class="btn-text">Analytics</span></a>
+      <a href="/goals" class="btn-ghost">🎯 <span class="btn-text">Goals</span></a>
+      <a href="/review" class="btn-ghost">📝 <span class="btn-text">Review</span></a>
+      <a href="/settings" class="btn-ghost">⚙ <span class="btn-text">Settings</span></a>
+    </div>
+  </header>
+
+  <div class="d-wrap">
+    <div class="d-head">
+      <h2>Daily check-in</h2>
+      <div class="d-date"><span id="d-today"></span> <span class="d-saved" id="d-saved">saved</span></div>
+    </div>
+
+    <div class="d-tabs" id="d-tabs"></div>
+    <div id="d-body"><div class="d-empty">Loading…</div></div>
+  </div>
+
+  <script>
+    const TABS = [
+      { id: "today",   label: "Today" },
+      { id: "trends",  label: "Trends" },
+      { id: "insights",label: "What moves the needle" },
+      { id: "fuel",    label: "Fuelling" },
+    ];
+    const FIELDS = {{ journal_fields | tojson }};
+    const SUGGESTED = {{ suggested_habits | tojson }};
+
+    let DATA = null, JOURNAL = null, FUEL = null, chart = null;
+    let tab = new URLSearchParams(location.search).get("tab") || "today";
+    if (!TABS.some(t => t.id === tab)) tab = "today";
+    let lag = parseInt(localStorage.getItem("dailyLag") || "1", 10);
+    let jrange = parseInt(localStorage.getItem("dailyRange") || "90", 10);
+
+    const $ = id => document.getElementById(id);
+    const esc = s => (s || "").replace(/[&<>"']/g, c =>
+      ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+
+    let saveTimer = null;
+    function flashSaved() {
+      $("d-saved").classList.add("on");
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => $("d-saved").classList.remove("on"), 1600);
+    }
+
+    async function post(url, body, method) {
+      const r = await fetch(url, {
+        method: method || "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}),
+      });
+      return r.json();
+    }
+
+    // ── Today: habits + journal ─────────────────────────────────────
+    function habitRow(h) {
+      const done = !!(DATA.entry.habits || {})[h.id];
+      const cadence = h.cadence === "weekly"
+        ? `${h.target_per_week}×/week` : "daily";
+      const grid = h.grid.map(c =>
+        `<div class="h-cell ${c.done ? "done" : (c.eligible ? "" : "off")}"
+              title="${c.date}${c.done ? " · done" : ""}"></div>`).join("");
+      return `<div class="h-row">
+        <button class="h-check ${done ? "done" : ""}" data-h="${h.id}"
+                aria-pressed="${done}" title="Toggle">${done ? "✓" : ""}</button>
+        <span class="h-icon">${esc(h.icon)}</span>
+        <div class="h-main">
+          <div class="h-name">${esc(h.name)}</div>
+          <div class="h-meta">${cadence} · ${h.completed}/${h.expected} in ${DATA.days}d${
+            h.rate != null ? ` · ${h.rate}%` : ""}${
+            h.best_streak ? ` · best ${h.best_streak}${h.streak_unit}` : ""}</div>
+          <div class="h-grid">${grid}</div>
+        </div>
+        <div class="h-streak ${h.streak ? "" : "zero"}">${
+          h.streak ? `🔥 ${h.streak}${h.streak_unit}` : "—"}</div>
+        <button class="h-del" data-del="${h.id}" title="Remove">×</button>
+      </div>`;
+    }
+
+    function renderToday() {
+      const e = DATA.entry;
+      const habits = DATA.habits.length
+        ? DATA.habits.map(habitRow).join("")
+        : `<div class="d-empty">No habits yet. Add one below — consistency is
+             what the watch cannot measure for you.</div>`;
+
+      const journal = Object.entries(FIELDS).map(([key, meta]) => {
+        const val = e[key];
+        const inv = meta.good_high ? "" : " inv";
+        const dots = [1,2,3,4,5].map(n =>
+          `<button class="j-dot${val === n ? " on" + inv : ""}"
+                   data-f="${key}" data-v="${n}">${n}</button>`).join("");
+        return `<div class="j-field">
+          <div class="j-label">${meta.icon} ${meta.label}
+            <span class="j-hint">${meta.good_high ? "1 low · 5 high" : "1 none · 5 very sore"}</span>
+          </div>
+          <div class="j-scale">${dots}</div>
+        </div>`;
+      }).join("");
+
+      $("d-body").innerHTML = `
+        <div class="d-card">
+          <h3>Habits</h3>
+          <div class="d-sub">${DATA.adherence != null
+            ? `<span class="h-adh">${DATA.adherence}% adherence over the last ${DATA.days} days</span>`
+            : "Tick them off as you go."}</div>
+          ${habits}
+          <div class="h-add">
+            <input type="text" id="h-name" placeholder="New habit, e.g. 10 min mobility" />
+            <input type="text" id="h-icon" placeholder="🧘" size="2" style="width:52px;text-align:center" />
+            <select id="h-cadence">
+              <option value="daily">Every day</option>
+              <option value="weekly">Times per week</option>
+            </select>
+            <input type="number" id="h-target" min="1" max="7" value="3"
+                   style="width:56px;display:none" />
+            <button id="h-save">Add</button>
+          </div>
+          <div class="h-sugg" id="h-sugg">${SUGGESTED.map((s, i) =>
+            `<button class="h-chip" data-s="${i}">${s.icon} ${esc(s.name)}</button>`).join("")}</div>
+        </div>
+
+        <div class="d-card">
+          <h3>How do you feel?</h3>
+          <div class="d-sub">Takes ten seconds. Over time it tells you which
+            numbers actually predict a good day.</div>
+          ${journal}
+          <textarea class="j-note" id="j-note" placeholder="Anything worth remembering about today…">${esc(e.note)}</textarea>
+        </div>`;
+
+      wireToday();
+    }
+
+    function wireToday() {
+      $("d-body").querySelectorAll("[data-h]").forEach(b => b.onclick = async () => {
+        const on = !b.classList.contains("done");
+        b.classList.toggle("done", on);
+        b.textContent = on ? "✓" : "";
+        const res = await post("/api/checkin", { habits: { [b.dataset.h]: on } });
+        DATA.entry = res.entry;
+        flashSaved();
+        await load(false);            // streaks and the grid move with the tick
+      });
+
+      $("d-body").querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
+        if (!confirm("Remove this habit? Past completions are kept.")) return;
+        await fetch("/api/habits/" + b.dataset.del, { method: "DELETE" });
+        await load(false);
+      });
+
+      $("d-body").querySelectorAll("[data-f]").forEach(b => b.onclick = async () => {
+        const f = b.dataset.f, v = parseInt(b.dataset.v, 10);
+        const next = DATA.entry[f] === v ? null : v;   // tapping again clears it
+        DATA.entry[f] = next;
+        const res = await post("/api/checkin", { [f]: next });
+        DATA.entry = res.entry;
+        flashSaved();
+        renderToday();
+      });
+
+      const cad = $("h-cadence"), tgt = $("h-target");
+      cad.onchange = () => { tgt.style.display = cad.value === "weekly" ? "" : "none"; };
+
+      $("h-save").onclick = async () => {
+        const name = $("h-name").value.trim();
+        if (!name) return;
+        await post("/api/habits", {
+          name, icon: $("h-icon").value.trim() || "✅",
+          cadence: cad.value, target_per_week: tgt.value,
+        });
+        $("h-name").value = ""; $("h-icon").value = "";
+        await load(false);
+      };
+
+      $("h-sugg").querySelectorAll("[data-s]").forEach(b => b.onclick = async () => {
+        await post("/api/habits", SUGGESTED[parseInt(b.dataset.s, 10)]);
+        await load(false);
+      });
+
+      let noteTimer = null;
+      $("j-note").oninput = e => {
+        clearTimeout(noteTimer);
+        noteTimer = setTimeout(async () => {
+          const res = await post("/api/checkin", { note: e.target.value });
+          DATA.entry.note = res.entry.note;
+          flashSaved();
+        }, 700);
+      };
+    }
+
+    // ── Trends: subjective ratings over time ────────────────────────
+    function renderTrends() {
+      const s = JOURNAL.series;
+      if (!s.entries) {
+        $("d-body").innerHTML = `<div class="d-card"><div class="d-empty">
+          No check-ins yet. Rate a day on the Today tab and this fills in.</div></div>`;
+        return;
+      }
+      $("d-body").innerHTML = `
+        <div class="d-card">
+          <h3>How you have felt</h3>
+          <div class="d-sub">${s.entries} check-in${s.entries === 1 ? "" : "s"} in the last ${jrange} days.
+            Gaps are days you did not log.</div>
+          <div class="chart-box"><canvas id="j-chart"></canvas></div>
+          <div class="d-note-txt">Soreness is plotted on the same 1–5 scale but
+            reads the other way: higher means more sore.</div>
+        </div>`;
+
+      const colors = { mood:"#5566d8", energy:"#e2622c", motivation:"#2e9e5b", soreness:"#8e7cc3" };
+      if (chart) chart.destroy();
+      chart = new Chart($("j-chart"), {
+        type: "line",
+        data: {
+          labels: s.dates.map(d => d.slice(5)),
+          datasets: Object.entries(FIELDS).map(([k, meta]) => ({
+            label: meta.label, data: s.series[k], borderColor: colors[k],
+            backgroundColor: colors[k], borderWidth: 2,
+            pointRadius: s.entries < 4 ? 5 : 2,
+            tension: 0.3, spanGaps: true,
+            hidden: !s.counts[k],
+          })),
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          scales: {
+            y: { min: 1, max: 5, ticks: { stepSize: 1 }, title: { display: true, text: "Rating" } },
+            x: { type: "category", ticks: { maxTicksLimit: 12 } },
+          },
+          plugins: { legend: { position: "bottom" } },
+        },
+      });
+    }
+
+    // ── Insights: correlations ──────────────────────────────────────
+    function cellColor(r) {
+      if (r == null) return "background:#f7f8f9;color:#c9ccd2";
+      const a = Math.min(1, Math.abs(r));
+      const c = r > 0 ? "46,158,91" : "180,68,47";
+      return `background:rgba(${c},${(a * 0.75).toFixed(2)});color:${a > 0.5 ? "#fff" : "#4a4f57"}`;
+    }
+
+    function renderInsights() {
+      const c = JOURNAL.correlations;
+      const controls = `
+        <div class="c-controls">
+          <label>Window
+            <select id="c-range">
+              ${[30,60,90,180,365].map(d =>
+                `<option value="${d}" ${d===jrange?"selected":""}>${d} days</option>`).join("")}
+            </select>
+          </label>
+          <label>Compare against
+            <select id="c-lag">
+              <option value="0" ${lag===0?"selected":""}>the same day</option>
+              <option value="1" ${lag===1?"selected":""}>the day before</option>
+              <option value="2" ${lag===2?"selected":""}>two days before</option>
+            </select>
+          </label>
+        </div>`;
+
+      if (!c.enough_data) {
+        $("d-body").innerHTML = `<div class="d-card">${controls}
+          <div class="d-empty">Only ${c.entries} check-in${c.entries === 1 ? "" : "s"} in this window.
+            Correlations need at least 10 before they mean anything, so this
+            stays blank rather than showing you noise.</div></div>`;
+        wireInsights();
+        return;
+      }
+
+      const head = c.metrics.map(m => `<th>${m.label}</th>`).join("");
+      const rows = c.rows.map(r => `<tr>
+        <td class="rowh">${r.label}</td>
+        ${r.cells.map(x => `<td><span class="c-cell" style="${cellColor(x.r)}"
+            title="${x.r == null ? "not enough paired days" : `r = ${x.r} over ${x.n} days`}"
+          >${x.r == null ? "–" : x.r.toFixed(2)}</span></td>`).join("")}
+      </tr>`).join("");
+
+      const findings = c.findings.length ? c.findings.map(f => {
+        const helps = f.good_high ? f.direction === "higher" : f.direction === "lower";
+        return `<div>• <b>${f.metric}</b> ${f.direction} goes with
+          ${helps ? "better" : "worse"} <b>${f.subjective.toLowerCase()}</b>
+          (${f.strength}, r&nbsp;=&nbsp;${f.r}, ${f.n} days)</div>`;
+      }).join("") : "<div>Nothing stands out yet at this window.</div>";
+
+      $("d-body").innerHTML = `
+        <div class="d-card">
+          <h3>What moves the needle</h3>
+          <div class="d-sub">How each rating lines up with your biometrics
+            ${lag ? `from ${lag} day${lag > 1 ? "s" : ""} earlier` : "on the same day"}.</div>
+          ${controls}
+          <div class="c-find">${findings}</div>
+          <div class="d-note-txt">Correlation is not causation, and ${c.entries}
+            days is a small sample. Treat these as questions worth testing, not
+            conclusions.</div>
+        </div>
+        <div class="d-card">
+          <h3>Full matrix</h3>
+          <div class="d-sub">Green means they rise together, red means one rises
+            as the other falls.</div>
+          <div style="overflow-x:auto">
+            <table class="c-tbl"><thead><tr><th class="rowh"></th>${head}</tr></thead>
+            <tbody>${rows}</tbody></table>
+          </div>
+        </div>`;
+      wireInsights();
+    }
+
+    function wireInsights() {
+      $("c-range").onchange = async e => {
+        jrange = parseInt(e.target.value, 10);
+        localStorage.setItem("dailyRange", jrange);
+        await loadJournal(); render();
+      };
+      $("c-lag").onchange = async e => {
+        lag = parseInt(e.target.value, 10);
+        localStorage.setItem("dailyLag", lag);
+        await loadJournal(); render();
+      };
+    }
+
+    // ── Fuelling ────────────────────────────────────────────────────
+    function renderFuel() {
+      const f = FUEL;
+      const sessions = (f.sessions || []).map(s => `
+        <div class="f-sess">
+          <h4>${esc(s.name)}<span class="f-tag ${s.intensity}">${s.intensity}</span></h4>
+          <div class="d-sub">${s.date} · ${s.minutes} min</div>
+          ${s.before ? `<div class="f-line"><span>Before</span><span>${esc(s.before)}</span></div>` : ""}
+          ${s.during ? `<div class="f-line"><span>During</span><span>${esc(s.during)}</span></div>` : ""}
+          ${s.after  ? `<div class="f-line"><span>After</span><span>${esc(s.after)}</span></div>` : ""}
+          <div class="f-line"><span>Fluid</span><span>${esc(s.fluid_ml_per_h)}${
+            s.fluid_total_ml ? ` · about ${s.fluid_total_ml} mL total` : ""}${
+            s.sodium ? `<br>${esc(s.sodium)}` : ""}</span></div>
+        </div>`).join("");
+
+      const d = f.daily || {};
+      const daily = `<div class="f-targets">
+        <div class="f-tgt"><div class="k">Load today</div><div class="v">${d.load_band || "—"}</div></div>
+        <div class="f-tgt"><div class="k">Carbohydrate</div><div class="v">${
+          d.carbs || d.carb_g_per_kg + " g/kg"}</div></div>
+        <div class="f-tgt"><div class="k">Protein</div><div class="v">${
+          d.protein || d.protein_g_per_kg + " g/kg"}</div></div>
+      </div>`;
+
+      const flags = (f.flags || []).length ? `
+        <div class="d-card">
+          <h3>Possible under-fuelling</h3>
+          <div class="d-sub">Training days where intake looked low for the work done.</div>
+          ${f.flags.map(x => `<div class="f-flag"><b>${x.date}</b> · ${x.minutes} min
+            ${x.intensity} · ${x.reasons.join("; ")}</div>`).join("")}
+        </div>` : "";
+
+      const missing = (f.missing || []).length ? `
+        <div class="d-card"><div class="f-missing">
+          To sharpen these numbers, add: ${f.missing.map(esc).join("<br>")}
+        </div></div>` : "";
+
+      $("d-body").innerHTML = `
+        <div class="d-card">
+          <h3>Daily targets</h3>
+          <div class="d-sub">${f.has_session_today
+              ? `Based on ${f.minutes_today} min of training logged today.`
+              : "Nothing logged today, so these assume an easy day."}${
+            f.weight_kg ? ` Scaled to ${f.weight_kg} kg (${esc(f.weight_source)}).`
+                        : " Body weight unknown, so these are per-kilogram."}</div>
+          ${daily}
+        </div>
+        <div class="d-card">
+          <h3>${f.has_session_today ? "Today's sessions" : "Most recent session"}</h3>
+          <div class="d-sub">${f.has_session_today ? "" :
+            "Nothing logged today yet — here is what the last session called for."}</div>
+          ${sessions || '<div class="d-empty">No sessions found.</div>'}
+        </div>
+        ${flags}
+        ${missing}
+        <div class="d-card"><div class="d-note-txt">
+          Targets follow mainstream sports-nutrition guidance (ACSM/IOC/ISSN):
+          30–60 g carbohydrate per hour over an hour, 60–90 g/h beyond two and a
+          half, 0.3–0.4 g/kg protein afterwards, and 1.6–2.2 g/kg protein daily.
+          Intensity is inferred from heart rate against an estimated max of
+          ${f.hr_max} bpm. General guidance, not medical advice.
+        </div></div>`;
+    }
+
+    // ── Shell ───────────────────────────────────────────────────────
+    function renderTabs() {
+      $("d-tabs").innerHTML = TABS.map(t =>
+        `<button class="d-tab ${t.id === tab ? "active" : ""}" data-t="${t.id}">${t.label}</button>`).join("");
+      $("d-tabs").querySelectorAll("[data-t]").forEach(b => b.onclick = () => {
+        tab = b.dataset.t;
+        history.replaceState(null, "", "?tab=" + tab);
+        renderTabs(); render();
+      });
+    }
+
+    function render() {
+      if (tab === "today")    return DATA ? renderToday() : null;
+      if (tab === "trends")   return JOURNAL ? renderTrends() : null;
+      if (tab === "insights") return JOURNAL ? renderInsights() : null;
+      if (tab === "fuel")     return FUEL ? renderFuel() : null;
+    }
+
+    async function loadJournal() {
+      JOURNAL = await (await fetch(`/api/checkin/journal?days=${jrange}&lag=${lag}`)).json();
+    }
+
+    async function load(full) {
+      DATA = await (await fetch("/api/checkin?days=30")).json();
+      if (full !== false || !JOURNAL) {
+        await loadJournal();
+        FUEL = await (await fetch("/api/fueling")).json();
+      }
+      $("d-today").textContent = new Date(DATA.entry.date + "T00:00:00")
+        .toLocaleDateString(undefined, { weekday:"long", month:"short", day:"numeric" });
+      render();
+    }
+
+    renderTabs();
+    load(true);
+  </script>
+</body>
+</html>
