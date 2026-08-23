@@ -1017,6 +1017,24 @@ def _nutrition_status() -> dict | None:
     return {"days": len(data), "from": dates[0], "to": dates[-1]}
 
 
+def _profile_weight_ctx(settings: dict) -> dict:
+    """
+    Body weight for the settings form. Stored canonically in kg, shown in
+    whichever unit the athlete last used, defaulting to their global
+    distance-unit preference so the form matches the rest of the app.
+    """
+    profile = (settings or {}).get("athlete_profile") or {}
+    unit = profile.get("weight_unit")
+    if unit not in ("kg", "lb"):
+        unit = "kg" if settings.get("units") == "km" else "lb"
+
+    kg = profile.get("weight_kg")
+    shown = None
+    if isinstance(kg, (int, float)) and kg > 0:
+        shown = round(kg / 0.45359237, 1) if unit == "lb" else round(kg, 1)
+    return {"profile_weight": shown, "profile_weight_unit": unit}
+
+
 def _get_local_ip() -> str:
     """Detect the machine's primary LAN IP (the IP other devices on the network can reach)."""
     try:
@@ -1051,6 +1069,7 @@ async def settings_page(request: Request, error: str = "", success: str = ""):
         "has_gemini_key":          bool(cm.load_credential("gemini_api_key")),
         "nutrition_status":        _nutrition_status(),
         "athlete_profile":         sm.load_settings().get("athlete_profile") or {},
+        **_profile_weight_ctx(sm.load_settings()),
         "coach_memory":            mm.load_memory(),
         "lan_ip":                  _get_local_ip(),
         "app_port":                APP_PORT,
@@ -1329,6 +1348,38 @@ async def api_save_profile(request: Request):
     global health_summary, coach
     form = await request.form()
     settings = sm.load_settings()
+    existing = settings.get("athlete_profile") or {}
+
+    # Weight is entered in whichever unit is convenient but stored in kg, so a
+    # later unit switch never silently changes what the number means.
+    weight_kg = existing.get("weight_kg")
+    raw_weight = (form.get("weight") or "").strip()
+    if not raw_weight:
+        weight_kg = None
+    else:
+        try:
+            val = float(raw_weight)
+            if (form.get("weight_unit") or "lb") == "lb":
+                val *= 0.45359237
+            # Only an empty field clears a stored weight; unparseable or
+            # implausible input leaves the previous value alone.
+            if 20 < val < 300:
+                weight_kg = round(val, 2)
+        except ValueError:
+            pass
+
+    age = existing.get("age")
+    raw_age = (form.get("age") or "").strip()
+    if not raw_age:
+        age = None
+    else:
+        try:
+            n = int(raw_age)
+            if 10 < n < 100:
+                age = n
+        except ValueError:
+            pass
+
     settings["athlete_profile"] = {
         "name":            (form.get("name") or "").strip(),
         "sports":          (form.get("sports") or "").strip(),
@@ -1338,6 +1389,9 @@ async def api_save_profile(request: Request):
         "training_plan":   (form.get("training_plan") or "").strip(),
         "upcoming_events": (form.get("upcoming_events") or "").strip(),
         "health_notes":    (form.get("health_notes") or "").strip(),
+        "weight_kg":       weight_kg,
+        "weight_unit":     "kg" if (form.get("weight_unit") == "kg") else "lb",
+        "age":             age,
     }
     sm.save_settings(settings)
     _rebuild_coach()

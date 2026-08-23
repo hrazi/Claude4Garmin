@@ -857,10 +857,19 @@ def format_health_summary(
     # ── Athlete Profile ───────────────────────────────────────────────────────
     profile = s.get("athlete_profile") or {}
     if any(profile.get(k) for k in ("name", "sports", "goal", "level", "training_days",
-                                     "training_plan", "upcoming_events", "health_notes")):
+                                     "training_plan", "upcoming_events", "health_notes",
+                                     "weight_kg", "age")):
         lines.append("=== ATHLETE PROFILE ===")
         if profile.get("name"):
             lines.append(f"Name: {profile['name']} (always address them by this name)")
+        if profile.get("age"):
+            lines.append(f"Age: {profile['age']}")
+        if isinstance(profile.get("weight_kg"), (int, float)):
+            kg = float(profile["weight_kg"])
+            if s.get("units", "mi") == "km":
+                lines.append(f"Body weight: {kg:.1f} kg")
+            else:
+                lines.append(f"Body weight: {kg / 0.45359237:.0f} lb ({kg:.1f} kg)")
         if profile.get("sports"):
             lines.append(f"Sport(s): {profile['sports']}")
         if profile.get("level"):

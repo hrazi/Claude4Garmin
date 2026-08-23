@@ -6,6 +6,7 @@
   <title>Daily — Garmin Health Coach</title>
   <link rel="stylesheet" href="/static/style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="/static/units.js"></script>
   <style>
     .d-wrap { max-width: 1000px; margin: 0 auto; padding: 24px; padding-top: calc(var(--header-h,56px) + 20px); }
     .d-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; gap:12px; flex-wrap:wrap; }
@@ -465,7 +466,7 @@
           <div class="d-sub">${f.has_session_today
               ? `Based on ${f.minutes_today} min of training logged today.`
               : "Nothing logged today, so these assume an easy day."}${
-            f.weight_kg ? ` Scaled to ${f.weight_kg} kg (${esc(f.weight_source)}).`
+            f.weight_kg ? ` Scaled to ${Units.fmtWeight(f.weight_kg)} (${esc(f.weight_source)}).`
                         : " Body weight unknown, so these are per-kilogram."}</div>
           ${daily}
         </div>

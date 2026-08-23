@@ -122,6 +122,16 @@
 
     paceLabel: () => `Pace (min/${current})`,
 
+    /** Kilograms -> "165 lb" or "75.0 kg", following the same preference. */
+    fmtWeight(kg, digits) {
+      if (kg == null) return '–';
+      if (current === 'mi') {
+        const lb = kg / 0.45359237;
+        return lb.toFixed(digits == null ? 0 : digits) + ' lb';
+      }
+      return kg.toFixed(digits == null ? 1 : digits) + ' kg';
+    },
+
     /**
      * Build a wired km/mi segmented control. Pass a callback to re-render.
      * Returns the element so the caller decides where it goes.
