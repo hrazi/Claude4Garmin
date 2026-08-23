@@ -502,6 +502,59 @@ async def api_training_log(refresh: int = 0):
     return JSONResponse(result)
 
 
+# ---------------------------------------------------------------------------
+# Charts — daily metric trends (steps, stress, RHR, training readiness)
+# ---------------------------------------------------------------------------
+
+def _build_chart_series() -> dict:
+    """
+    Return {dates, steps, stress, resting_hr, readiness, readiness_estimated}
+    aligned on a sorted date axis, drawn from the in-memory health_data.
+    Missing values are null so the chart can gap them.
+    """
+    hd = health_data or {}
+    by_date: dict[str, dict] = {}
+    for d in hd.get("daily_stats") or []:
+        day = d.get("date")
+        if day:
+            by_date.setdefault(day, {})[".stats"] = d
+    for r in hd.get("training_readiness") or []:
+        day = r.get("date")
+        if day:
+            by_date.setdefault(day, {})[".ready"] = r
+
+    dates = sorted(by_date)
+    steps, stress, rhr, readiness, est = [], [], [], [], []
+    for day in dates:
+        s = by_date[day].get(".stats") or {}
+        r = by_date[day].get(".ready") or {}
+        steps.append(s.get("steps"))
+        stress.append(s.get("stress_avg"))
+        rhr.append(s.get("resting_hr"))
+        readiness.append(r.get("score"))
+        est.append(bool(r.get("estimated")))
+    return {
+        "dates": dates,
+        "steps": steps,
+        "stress": stress,
+        "resting_hr": rhr,
+        "readiness": readiness,
+        "readiness_estimated": est,
+    }
+
+
+@app.get("/charts", response_class=HTMLResponse)
+async def charts_page(request: Request):
+    if not garmin_connected:
+        return RedirectResponse("/settings")
+    return templates.TemplateResponse(request, "charts.html", {"request": request})
+
+
+@app.get("/api/charts-data")
+async def api_charts_data():
+    return JSONResponse(_build_chart_series())
+
+
 def _nutrition_status() -> dict | None:
     """Return display metadata about the stored nutrition data, or None if empty."""
     data = np_.load_nutrition()

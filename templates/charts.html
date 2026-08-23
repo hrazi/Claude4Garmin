@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Charts — Garmin Health Coach</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    .ch-wrap { max-width: 1100px; margin: 0 auto; padding: 24px; padding-top: calc(var(--header-h, 56px) + 20px); }
+    .ch-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+    .ch-metrics { display: flex; gap: 8px; flex-wrap: wrap; }
+    .ch-chip {
+      border: 1px solid #d7dae0; background: #fff; color: #4a4f57; border-radius: 999px;
+      padding: 7px 14px; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 7px;
+    }
+    .ch-chip .sw { width: 11px; height: 11px; border-radius: 50%; }
+    .ch-chip.active { color: #fff; border-color: transparent; }
+    .ch-seg { display: inline-flex; border: 1px solid #d7dae0; border-radius: 8px; overflow: hidden; }
+    .ch-seg button { border: 0; background: #fff; color: #4a4f57; padding: 7px 12px; font-size: 13px; cursor: pointer; }
+    .ch-seg button + button { border-left: 1px solid #d7dae0; }
+    .ch-seg button.active { background: #2b2f36; color: #fff; }
+    .ch-card { background: #fff; border: 1px solid #ececf0; border-radius: 12px; padding: 18px; }
+    .ch-canvas-box { position: relative; height: 460px; }
+    .ch-state { text-align: center; color: #8a8f98; padding: 60px 20px; font-size: 15px; }
+    .ch-note { font-size: 12px; color: #9aa0a8; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-left">
+      <span class="header-icon">📈</span>
+      <span class="header-title">Charts</span>
+    </div>
+    <div class="header-right">
+      <a href="/" class="btn-ghost">💬 <span class="btn-text">Coach</span></a>
+      <a href="/training-log" class="btn-ghost">📖 <span class="btn-text">Training Log</span></a>
+      <a href="/settings" class="btn-ghost">⚙ <span class="btn-text">Settings</span></a>
+    </div>
+  </header>
+
+  <div class="ch-wrap">
+    <div class="ch-toolbar">
+      <div class="ch-metrics" id="ch-metrics"></div>
+      <div class="ch-seg" id="ch-range" title="Time range">
+        <button data-days="14">14d</button>
+        <button data-days="30" class="active">30d</button>
+        <button data-days="90">90d</button>
+        <button data-days="0">All</button>
+      </div>
+    </div>
+
+    <div class="ch-card">
+      <div class="ch-canvas-box"><canvas id="ch-canvas"></canvas></div>
+      <div class="ch-state" id="ch-loading">Loading your metrics…</div>
+    </div>
+    <div class="ch-note" id="ch-note"></div>
+  </div>
+
+  <script>
+    const METRICS = [
+      { key: "steps",       label: "Steps",              color: "#5566d8", axis: "y1" },
+      { key: "stress",      label: "Stress",             color: "#e2622c", axis: "y" },
+      { key: "resting_hr",  label: "Resting HR",         color: "#26a69a", axis: "y" },
+      { key: "readiness",   label: "Training Readiness", color: "#8e7cc3", axis: "y" },
+    ];
+    let DATA = null, chart = null;
+    let range = parseInt(localStorage.getItem("chartsRange") || "30", 10);
+    let active = JSON.parse(localStorage.getItem("chartsMetrics") || "null")
+              || METRICS.map(m => m.key);
+
+    function slice(arr, n) { return n && arr.length > n ? arr.slice(-n) : arr; }
+
+    function render() {
+      if (!DATA) return;
+      const dates = slice(DATA.dates, range);
+      const n = dates.length;
+      const datasets = METRICS.filter(m => active.includes(m.key)).map(m => ({
+        label: m.label,
+        data: slice(DATA[m.key], range),
+        borderColor: m.color,
+        backgroundColor: m.color + "22",
+        yAxisID: m.axis,
+        spanGaps: true,
+        tension: 0.3,
+        pointRadius: n > 45 ? 0 : 2,
+        borderWidth: 2,
+      }));
+      const cfg = {
+        type: "line",
+        data: { labels: dates, datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { display: false }, ticks: { maxTicksLimit: 10, autoSkip: true } },
+            y:  { position: "left",  title: { display: true, text: "Stress · RHR · Readiness" } },
+            y1: { position: "right", title: { display: true, text: "Steps" },
+                  grid: { drawOnChartArea: false }, beginAtZero: true },
+          },
+        },
+      };
+      if (chart) { chart.data = cfg.data; chart.options = cfg.options; chart.update(); }
+      else chart = new Chart(document.getElementById("ch-canvas"), cfg);
+      document.getElementById("ch-note").textContent =
+        n ? (n + " days · " + dates[0] + " → " + dates[n - 1]) : "";
+    }
+
+    function buildChips() {
+      const box = document.getElementById("ch-metrics");
+      box.innerHTML = "";
+      for (const m of METRICS) {
+        const on = active.includes(m.key);
+        const b = document.createElement("button");
+        b.className = "ch-chip" + (on ? " active" : "");
+        b.style.background = on ? m.color : "#fff";
+        b.innerHTML = '<span class="sw" style="background:' + m.color + '"></span>' + m.label;
+        b.onclick = () => {
+          if (active.includes(m.key)) active = active.filter(k => k !== m.key);
+          else active.push(m.key);
+          localStorage.setItem("chartsMetrics", JSON.stringify(active));
+          buildChips(); render();
+        };
+        box.appendChild(b);
+      }
+    }
+
+    document.getElementById("ch-range").addEventListener("click", e => {
+      const b = e.target.closest("button"); if (!b) return;
+      range = parseInt(b.dataset.days, 10);
+      localStorage.setItem("chartsRange", String(range));
+      document.querySelectorAll("#ch-range button").forEach(x =>
+        x.classList.toggle("active", x === b));
+      render();
+    });
+
+    (async function () {
+      try {
+        DATA = await (await fetch("/api/charts-data")).json();
+        document.getElementById("ch-loading").style.display = "none";
+        document.querySelectorAll("#ch-range button").forEach(x =>
+          x.classList.toggle("active", parseInt(x.dataset.days, 10) === range));
+        buildChips();
+        if (!DATA.dates.length) {
+          document.getElementById("ch-loading").style.display = "";
+          document.getElementById("ch-loading").textContent = "No metric history yet.";
+          return;
+        }
+        render();
+      } catch (e) {
+        document.getElementById("ch-loading").textContent = "Could not load metrics: " + e;
+      }
+    })();
+  </script>
+</body>
+</html>
