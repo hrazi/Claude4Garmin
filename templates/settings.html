@@ -181,8 +181,14 @@
               </label>
               {% if data_settings.lan_access and lan_ip %}
               <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:12px 16px; font-size:13px; color:#166534; line-height:1.6;">
-                <strong>Open this URL on your phone:</strong><br>
-                <span style="font-family:monospace; font-size:15px; letter-spacing:.02em;">http://{{ lan_ip }}:{{ app_port }}</span>
+                <strong>Open this URL on your phone (includes access token):</strong><br>
+                <span style="font-family:monospace; font-size:14px; letter-spacing:.02em; word-break:break-all;">http://{{ lan_ip }}:{{ app_port }}{% if lan_token %}/?token={{ lan_token }}{% endif %}</span>
+                {% if lan_token %}
+                <div style="margin-top:10px; font-size:12px; color:#3f6b4e;">
+                  🔒 Other devices must enter this token once. Keep the link private — anyone with it can see your health data.
+                  <br>Token: <code style="background:#dcfce7; padding:1px 5px; border-radius:4px;">{{ lan_token }}</code>
+                </div>
+                {% endif %}
               </div>
               {% elif data_settings.lan_access %}
               <p style="font-size:12px; color:var(--muted);">LAN access is on but your local IP could not be detected.</p>

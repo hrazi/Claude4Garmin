@@ -19,6 +19,8 @@ Run with:
 import asyncio
 import json
 import os
+import secrets
+import hmac
 import socket
 import subprocess
 import sys
@@ -353,6 +355,71 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan, title="Garmin Health Coach")
 app.mount("/static", StaticFiles(directory=str(bundle_dir() / "static")), name="static")
 templates = Jinja2Templates(directory=str(bundle_dir() / "templates"))
+
+
+# ---------------------------------------------------------------------------
+# LAN access authentication (#2)
+# ---------------------------------------------------------------------------
+# When lan_access is on the server binds 0.0.0.0, exposing all health data and
+# the AI chat to the local network. Loopback (the owner on this machine) stays
+# unauthenticated; any non-loopback client must present the shared token via a
+# cookie, the ?token= query param (which then sets the cookie), or an
+# X-GHC-Token header. /health and /static are always allowed.
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"}
+_AUTH_COOKIE = "ghc_lan_token"
+
+_UNLOCK_PAGE = """<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Garmin Health Coach — Unlock</title>
+<style>body{font-family:-apple-system,Segoe UI,sans-serif;background:#f2f4f7;display:flex;
+min-height:100vh;align-items:center;justify-content:center;margin:0}
+.c{background:#fff;padding:32px;border-radius:14px;box-shadow:0 6px 24px rgba(0,0,0,.08);width:min(360px,92vw)}
+h1{font-size:18px;margin:0 0 6px}p{color:#6b7078;font-size:13px;margin:0 0 16px}
+input{width:100%;padding:10px;border:1px solid #d7dae0;border-radius:8px;font-size:15px;box-sizing:border-box}
+button{width:100%;margin-top:12px;padding:10px;border:0;border-radius:8px;background:#2b2f36;color:#fff;font-size:15px;cursor:pointer}
+</style></head><body><div class="c"><h1>🔒 Garmin Health Coach</h1>
+<p>This device needs the access token to view your health data.</p>
+<form method="get"><input name="token" placeholder="Access token" autofocus>
+<button type="submit">Unlock</button></form></div></body></html>"""
+
+
+def get_or_create_lan_token() -> str:
+    """Return the LAN access token, generating and persisting one if absent."""
+    settings = sm.load_settings()
+    token = settings.get("lan_token")
+    if not token:
+        token = secrets.token_urlsafe(18)
+        settings["lan_token"] = token
+        sm.save_settings(settings)
+    return token
+
+
+@app.middleware("http")
+async def _lan_auth_middleware(request: Request, call_next):
+    settings = sm.load_settings()
+    if not settings.get("lan_access"):
+        return await call_next(request)   # loopback-only mode: nothing exposed
+
+    client_host = request.client.host if request.client else ""
+    path = request.url.path
+    if client_host in _LOOPBACK_HOSTS or path == "/health" or path.startswith("/static"):
+        return await call_next(request)
+
+    token = get_or_create_lan_token()
+    supplied = (
+        request.cookies.get(_AUTH_COOKIE)
+        or request.headers.get("X-GHC-Token")
+        or request.query_params.get("token")
+    )
+    if supplied and hmac.compare_digest(supplied, token):
+        response = await call_next(request)
+        # Persist via cookie so the token isn't needed on every navigation.
+        if request.query_params.get("token"):
+            response.set_cookie(_AUTH_COOKIE, token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 90)
+        return response
+
+    return HTMLResponse(_UNLOCK_PAGE, status_code=401)
 
 
 # ── Jinja2 template filters ───────────────────────────────────────────────────
@@ -754,6 +821,7 @@ async def settings_page(request: Request, error: str = "", success: str = ""):
         "coach_memory":            mm.load_memory(),
         "lan_ip":                  _get_local_ip(),
         "app_port":                APP_PORT,
+        "lan_token":               sm.load_settings().get("lan_token") or "",
     })
 
 
@@ -763,6 +831,8 @@ async def api_save_network_settings(request: Request):
     existing = sm.load_settings()
     existing["lan_access"] = "lan_access" in form
     sm.save_settings(existing)
+    if existing["lan_access"]:
+        get_or_create_lan_token()   # ensure a token exists before LAN is exposed
     return RedirectResponse("/settings?success=network_saved", status_code=303)
 
 
