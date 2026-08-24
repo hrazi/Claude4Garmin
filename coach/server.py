@@ -52,6 +52,7 @@ from . import insights as ins
 from . import goals as gl
 from . import weekly_review as wr
 from . import analytics as an
+from . import pillars as pl
 from . import checkin as ci
 from . import fueling as fl
 from .garmin_client import get_garmin_client, fetch_health_data, fetch_activity_history, format_health_summary, format_trend_summary, fill_readiness_estimates, backfill_sleep_times
@@ -917,6 +918,7 @@ async def api_analytics(view: str = "all", days: int = 90):
         "efficiency": lambda: an.build_efficiency(activities),
         "pace_curve": lambda: an.build_pace_curve(activities),
         "correlations": lambda: an.build_correlations(hd, activities, days=days),
+        "pillars": lambda: pl.build_pillars(hd, activities),
     }
 
     wanted = builders if view in ("all", "") else {view: builders.get(view)}

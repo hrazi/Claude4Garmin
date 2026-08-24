@@ -55,6 +55,32 @@
     .cm-item { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #4a4f57; }
     .cm-badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; color: #fff; font-weight: 600; }
     .an-hint { font-size: 12px; color: #8a8f98; background: #f7f8fa; border: 1px solid #ececf0; border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; }
+
+    /* #45 fitness pillars */
+    .pl-overall { display: flex; align-items: center; gap: 16px; margin: 4px 0 18px; }
+    .pl-big { font-size: 40px; font-weight: 600; color: #2b2f36; line-height: 1; font-variant-numeric: tabular-nums; }
+    .pl-big span { font-size: 16px; color: #9aa0a8; font-weight: 400; margin-left: 3px; }
+    .pl-meta { font-size: 13px; color: #6b7079; line-height: 1.6; }
+    .pl-label { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: #9aa0a8; }
+    .pl-table { margin-top: 20px; display: grid; gap: 2px; }
+    .pl-row { display: grid; grid-template-columns: 132px 1fr 52px 52px 104px 1.4fr; align-items: center;
+              gap: 12px; padding: 9px 4px; border-bottom: 1px solid #f2f3f5; font-size: 13px; }
+    .pl-row.head { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: #9aa0a8; border-bottom: 1px solid #e8eaee; }
+    .pl-row.off { opacity: .55; }
+    .pl-name { font-weight: 500; color: #3c4043; }
+    .pl-bar { height: 7px; background: #f0f1f4; border-radius: 999px; overflow: hidden; }
+    .pl-bar span { display: block; height: 100%; background: linear-gradient(90deg, #7aa9f7, #4285f4); border-radius: 999px; }
+    .pl-score { font-variant-numeric: tabular-nums; font-weight: 600; color: #2b2f36; text-align: right; }
+    .pl-prev { font-variant-numeric: tabular-nums; color: #9aa0a8; text-align: right; }
+    .pl-d { font-size: 12px; font-variant-numeric: tabular-nums; }
+    .pl-d.up { color: #1a7f4b; } .pl-d.down { color: #b3261e; } .pl-d.flat { color: #9aa0a8; }
+    .pl-detail { font-size: 12px; color: #6b7079; line-height: 1.5; }
+    .pl-blurb { display: block; color: #a8adb5; font-size: 11.5px; }
+    @media (max-width: 860px) {
+      .pl-row { grid-template-columns: 1fr 60px 60px 90px; }
+      .pl-bar, .pl-detail { grid-column: 1 / -1; }
+      .pl-row.head { display: none; }
+    }
     .an-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
     .u-seg { display: inline-flex; border: 1px solid #d7dae0; border-radius: 8px; overflow: hidden; flex: none; }
     .u-seg button { border: 0; background: #fff; color: #4a4f57; padding: 7px 13px; font-size: 12.5px; cursor: pointer; }
@@ -94,6 +120,7 @@ const VIEWS = [
   { id: 'efficiency',   label: '⚡ Efficiency trend' },
   { id: 'pace_curve',   label: '🏁 Pace curve' },
   { id: 'correlations', label: '🔗 Correlations' },
+  { id: 'pillars',      label: '🕸 Fitness pillars' },
 ];
 
 let DATA = null;
@@ -607,6 +634,127 @@ function drawScatter(d, aKey, bKey) {
   }));
 }
 
+// ------------------------------------------------------------------- #45 pillars
+const PILLAR_BLURB = {
+  aerobic: 'Metres covered per heartbeat, scored against your own two-year range.',
+  recovery: 'Overnight HRV and resting heart rate against your own six-month baseline.',
+  sleep: 'Garmin sleep score blended with how long you actually slept.',
+  consistency: 'Training days per week, and how many weeks you touched at all.',
+  activity: 'Daily step count — the movement outside deliberate training.',
+};
+
+function fmtDelta(v) {
+  if (v == null) return '<span class="pl-d flat">no comparison</span>';
+  if (Math.abs(v) < 0.05) return '<span class="pl-d flat">no change</span>';
+  const up = v > 0;
+  return `<span class="pl-d ${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${Math.abs(v).toFixed(1)}</span>`;
+}
+
+function prettyRange(a, b) {
+  const f = s => new Date(s + 'T00:00:00').toLocaleDateString(undefined,
+    { month: 'short', day: 'numeric' });
+  return `${f(a)} – ${f(b)}`;
+}
+
+function renderPillars(d) {
+  if (!d || d.error) return body().innerHTML = empty(d?.error || 'No pillar data yet.');
+
+  const unscored = d.unscored || [];
+  const curRange = prettyRange(d.current.start, d.current.end);
+  const prevRange = prettyRange(d.previous.start, d.previous.end);
+
+  // The overall number is withheld rather than faked when too few pillars
+  // scored, so say which it is instead of printing a bare dash.
+  const overall = d.overall == null
+    ? `<div class="an-state">Not enough of the five pillars have data to summarise an overall score.</div>`
+    : `<div class="pl-overall">
+         <div class="pl-big">${d.overall.toFixed(1)}<span>/100</span></div>
+         <div class="pl-meta">
+           <div class="pl-label">Overall · ${curRange}</div>
+           <div>${d.overall_previous != null
+              ? `was ${d.overall_previous.toFixed(1)} in ${prevRange} ${fmtDelta(d.overall_delta)}`
+              : 'no comparable earlier period'}</div>
+         </div>
+       </div>`;
+
+  const rows = d.pillars.map(k => {
+    const c = d.current[k], p = d.previous[k];
+    const scored = c.score != null;
+    return `<div class="pl-row ${scored ? '' : 'off'}">
+      <div class="pl-name">${d.labels[k]}</div>
+      <div class="pl-bar"><span style="width:${scored ? c.score : 0}%"></span></div>
+      <div class="pl-score">${scored ? c.score.toFixed(1) : '–'}</div>
+      <div class="pl-prev">${p.score != null ? p.score.toFixed(1) : '–'}</div>
+      <div>${fmtDelta(d.deltas[k])}</div>
+      <div class="pl-detail">${c.detail || c.reason || ''}<span class="pl-blurb">${PILLAR_BLURB[k] || ''}</span></div>
+    </div>`;
+  }).join('');
+
+  const shiftNote = d.comparison_shifted
+    ? `<div class="an-hint">Your health archive does not reach back a full ${d.lookback_days} days, so the comparison uses the oldest complete ${d.window_days} days on record (${prevRange}) instead.</div>`
+    : '';
+
+  const gapNote = unscored.length
+    ? `<div class="an-note">Not scored this window: <strong>${unscored.map(k => d.labels[k]).join(', ')}</strong>.
+       These are left as gaps in the chart rather than drawn as zero — missing data is not the same as poor fitness.</div>`
+    : '';
+
+  body().innerHTML = card('Fitness pillars',
+    `Five sides of fitness on one scale, comparing ${curRange} with ${prevRange}.`,
+    `${shiftNote}
+     ${overall}
+     <div class="an-canvas-box tall"><canvas id="c-pillars"></canvas></div>
+     <div class="pl-table">
+       <div class="pl-row head">
+         <div>Pillar</div><div></div><div>Now</div><div>Before</div><div>Change</div><div>What it measures</div>
+       </div>
+       ${rows}
+     </div>
+     ${gapNote}
+     <div class="an-note">Each axis is scored against your own history, not a population average, so 100 means your own best rather than somebody else's.
+       Baseline drawn from ${d.baseline.efficiency_runs} runs${d.baseline.hrv_ms ? `, HRV ${d.baseline.hrv_ms} ms` : ''}${d.baseline.resting_hr ? `, resting HR ${Math.round(d.baseline.resting_hr)} bpm` : ''}.</div>`);
+
+  const labels = d.pillars.map(k => d.labels[k]);
+  charts.push(new Chart($('c-pillars'), {
+    type: 'radar',
+    data: {
+      labels,
+      datasets: [
+        { label: `Before (${prevRange})`,
+          data: d.pillars.map(k => d.previous[k].score),
+          borderColor: 'rgba(150,157,166,.9)', backgroundColor: 'rgba(150,157,166,.14)',
+          pointBackgroundColor: 'rgba(150,157,166,.9)', borderWidth: 2, pointRadius: 3 },
+        { label: `Now (${curRange})`,
+          data: d.pillars.map(k => d.current[k].score),
+          borderColor: 'rgba(66,133,244,.95)', backgroundColor: 'rgba(66,133,244,.18)',
+          pointBackgroundColor: 'rgba(66,133,244,.95)', borderWidth: 2, pointRadius: 4 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      // A missing pillar must read as absent, not as zero: spanGaps would draw
+      // a straight line across the gap and invent a collapsed axis.
+      spanGaps: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, usePointStyle: true } },
+        tooltip: { callbacks: {
+          label: ctx => ctx.parsed.r == null
+            ? `${ctx.dataset.label}: not enough data`
+            : `${ctx.dataset.label}: ${ctx.parsed.r.toFixed(1)}/100`,
+        } },
+      },
+      scales: {
+        r: {
+          min: 0, max: 100,
+          ticks: { stepSize: 25, backdropColor: 'transparent', color: '#9aa0a8', font: { size: 10 } },
+          grid: { color: '#e8eaee' }, angleLines: { color: '#e8eaee' },
+          pointLabels: { font: { size: 12 }, color: '#3c4043' },
+        },
+      },
+    },
+  }));
+}
+
 // ------------------------------------------------------------------- plumbing
 function wireBackfill() {
   document.querySelectorAll('#an-backfill').forEach(btn => {
@@ -637,6 +785,7 @@ function render() {
   ({
     heatmap: renderHeatmap, sleep_bands: renderSleepBands, hr_zones: renderZones,
     efficiency: renderEfficiency, pace_curve: renderPaceCurve, correlations: renderCorrelations,
+    pillars: renderPillars,
   })[current](d);
 }
 
