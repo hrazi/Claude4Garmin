@@ -84,6 +84,47 @@
     .a-warn { background:#fdf6ee; border:1px solid #f0dcc2; border-radius:9px;
               padding:11px 13px; font-size:12.5px; color:#8a6d3b; margin-bottom:14px; }
     .a-load { padding:36px; text-align:center; color:#9aa0a8; font-size:14px; }
+
+    /* view switch */
+    .a-views { display:inline-flex; border:1px solid #d7dae0; border-radius:8px; overflow:hidden; flex:none; }
+    .a-views button { border:0; background:#fff; color:#4a4f57; padding:6px 15px; font-size:12.5px; cursor:pointer; }
+    .a-views button + button { border-left:1px solid #d7dae0; }
+    .a-views button.on { background:#2b2f36; color:#fff; }
+
+    /* streaks */
+    .a-streak { display:flex; gap:26px; align-items:center; flex-wrap:wrap;
+                background:#fff; border:1px solid #ececf0; border-radius:12px;
+                padding:14px 18px; margin-bottom:14px; }
+    .a-streak .s-big { font-size:26px; font-weight:800; color:#2b2f36;
+                       font-variant-numeric:tabular-nums; line-height:1.1; }
+    .a-streak .s-k { font-size:11px; color:#9aa0a8; text-transform:uppercase; letter-spacing:.04em; }
+    .a-streak .s-note { font-size:12px; color:#8a8f98; margin-left:auto; max-width:340px; text-align:right; }
+    .a-streak .s-fire { font-size:22px; }
+
+    /* weekly grid */
+    .tl-grid { border:1px solid #ececf0; border-radius:12px; overflow:hidden; background:#fff; }
+    .tl-row { display:grid; grid-template-columns:190px repeat(7, 1fr); }
+    .tl-row + .tl-row { border-top:1px solid #f0f0f3; }
+    .tl-head { background:#fbfbfc; }
+    .tl-head .tl-dow { text-align:center; padding:12px 4px; font-size:12px; color:#8a8f98; letter-spacing:.04em; }
+    .tl-head .tl-wk { padding:12px 16px; }
+    .tl-wk { padding:16px; border-right:1px solid #f0f0f3; background:#fbfbfc; }
+    .tl-wk .tl-year { font-size:22px; font-weight:800; color:#2b2f36; margin-bottom:6px; }
+    .tl-wk .tl-range { font-size:15px; font-weight:700; color:#2b2f36; }
+    .tl-wk .tl-total-k { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#9aa0a8; margin-top:10px; }
+    .tl-wk .tl-total-v { font-size:15px; font-weight:700; color:#5566d8; }
+    .tl-day { padding:14px 6px; display:flex; flex-direction:column; align-items:center;
+              gap:14px; border-right:1px solid #f6f6f8; min-height:40px; }
+    .tl-day:last-child { border-right:0; }
+    .tl-act { display:flex; flex-direction:column; align-items:center; width:100%; cursor:pointer; }
+    .tl-act:hover .tl-bubble { transform:scale(1.06); }
+    .tl-bubble { display:flex; align-items:center; justify-content:center; border-radius:50%;
+                 color:#fff; font-weight:700; font-size:13px; flex:none;
+                 box-shadow:0 1px 2px rgba(0,0,0,.12); transition:transform .12s; }
+    .tl-act .tl-name { margin-top:7px; font-size:11px; line-height:1.25; color:#7a7f87;
+                       text-align:center; max-width:130px; display:-webkit-box;
+                       -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .tl-empty-week { color:#c3c7cd; font-size:12px; padding:10px 0; }
     .chart-box { position:relative; height:230px; }
   </style>
 </head>
@@ -92,11 +133,11 @@
     <div class="header-left"><span class="header-icon">📋</span><span class="header-title">Activities</span></div>
     <div class="header-right">
       <a href="/" class="btn-ghost">💬 <span class="btn-text">Coach</span></a>
-      <a href="/training-log" class="btn-ghost">📖 <span class="btn-text">Training Log</span></a>
       <a href="/charts" class="btn-ghost">📈 <span class="btn-text">Charts</span></a>
       <a href="/analytics" class="btn-ghost">🔬 <span class="btn-text">Analytics</span></a>
       <a href="/daily" class="btn-ghost">📅 <span class="btn-text">Daily</span></a>
       <a href="/settings" class="btn-ghost">⚙ <span class="btn-text">Settings</span></a>
+      <button id="a-refresh" class="btn-ghost" title="Re-fetch the full history from Garmin">↻ <span class="btn-text">Sync</span></button>
     </div>
   </header>
 
@@ -112,7 +153,12 @@
     const PAGE = 50;
     let facets = null, rows = [], total = 0, offset = 0, loading = false;
     let group = "all", year = "all", search = "", sort = "date", desc = true;
-    let detailId = new URLSearchParams(location.search).get("id");
+    const qs = new URLSearchParams(location.search);
+    let detailId = qs.get("id");
+    let view = qs.get("view") === "grid" ? "grid"
+             : (localStorage.getItem("activitiesView") === "grid" ? "grid" : "list");
+    localStorage.setItem("activitiesView", view);
+    let weeks = [], streaks = null;
 
     // ── formatting ────────────────────────────────────────────────────
     function fmtDur(s) {
@@ -178,7 +224,12 @@
         ${chips}
         <select id="a-year">${years}</select>
         <input id="a-search" type="search" placeholder="Search name or type…" value="${esc(search)}" />
-        <span id="a-units" style="margin-left:auto"></span>
+        <span style="margin-left:auto"></span>
+        <div class="a-views">
+          <button data-v="list" class="${view === "list" ? "on" : ""}">List</button>
+          <button data-v="grid" class="${view === "grid" ? "on" : ""}">Grid</button>
+        </div>
+        <span id="a-units"></span>
       </div>`;
     }
 
@@ -209,6 +260,132 @@
       </div>`;
     }
 
+    // ── weekly grid ───────────────────────────────────────────────────
+    const DOW = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+    const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+    function groupColor(g) {
+      return ({ run:"#e2622c", walk:"#7cb342", ride:"#3f8fd0",
+                swim:"#26a69a", strength:"#8e7cc3" })[g] || "#b08968";
+    }
+    const dayOf = iso => { const [y,m,d] = iso.split("-").map(Number); return new Date(y, m-1, d); };
+    const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate()+n); return x; };
+    function weekLabel(mon) {
+      const end = addDays(mon, 6);
+      return mon.getMonth() === end.getMonth()
+        ? `${MON[mon.getMonth()]} ${mon.getDate()} – ${end.getDate()}`
+        : `${MON[mon.getMonth()]} ${mon.getDate()} – ${MON[end.getMonth()]} ${end.getDate()}`;
+    }
+
+    function streakBanner() {
+      if (!streaks || !streaks.active_weeks) return "";
+      const s = streaks;
+      const cur = s.current, best = s.longest;
+      const note = !cur
+        ? "No active streak. One activity this week starts a new one."
+        : s.in_grace
+          ? "Carried by last week — this week is still open, so nothing has been lost yet."
+          : cur === best && cur > 1
+            ? "That is your longest run of consecutive weeks ever."
+            : `Your best is ${best} week${best === 1 ? "" : "s"}.`;
+      const label = group === "all" ? "any activity" : facets.groups.find(g => g.key === group)?.label.toLowerCase() || group;
+      return `<div class="a-streak">
+        <div><div class="s-k">Current streak</div>
+          <div class="s-big">${cur > 2 ? '<span class="s-fire">🔥</span> ' : ""}${cur} <span style="font-size:14px;font-weight:600;color:#8a8f98">week${cur === 1 ? "" : "s"}</span></div></div>
+        <div><div class="s-k">Longest</div><div class="s-big">${best}</div></div>
+        <div><div class="s-k">Active weeks</div><div class="s-big">${s.active_weeks}</div></div>
+        <div class="s-note">Consecutive weeks with ${esc(label)}. ${note}</div>
+      </div>`;
+    }
+
+    function renderGrid() {
+      const totalM = weeks.reduce((n, w) => n + w.distance_m, 0);
+      const anyDist = totalM > 0;
+      let html = `<div class="a-head"><h2>Activities</h2>
+        <div class="a-count">${total} activit${total === 1 ? "y" : "ies"} across ${weeks.length} week${weeks.length === 1 ? "" : "s"}</div></div>
+        ${chipBar()}${streakBanner()}`;
+
+      if (!weeks.length) {
+        $("a-root").innerHTML = html + `<div class="a-card"><div class="a-empty">No activities match these filters.</div></div>`;
+        wireBar();
+        return;
+      }
+
+      // Bubble size scales with the square root of distance so the visual area,
+      // not the width, tracks the effort.
+      const maxM = Math.max(...weeks.flatMap(w => w.days.flat().map(a => a.distance_m || 0)), 1);
+      const MIN_D = 34, MAX_D = 82;
+      const dia = m => m ? Math.round(MIN_D + (MAX_D - MIN_D) * Math.sqrt(m / maxM)) : MIN_D;
+
+      let g = `<div class="tl-grid"><div class="tl-row tl-head"><div class="tl-wk"></div>` +
+        DOW.map(d => `<div class="tl-dow">${d}</div>`).join("") + `</div>`;
+
+      let prevYear = null, gap = [];
+      const flushGap = () => {
+        if (!gap.length) return;
+        const first = gap[0], last = gap[gap.length - 1];
+        if (gap.length === 1) {
+          const yr = first.getFullYear(), showYr = yr !== prevYear; prevYear = yr;
+          g += `<div class="tl-row"><div class="tl-wk">${showYr ? `<div class="tl-year">${yr}</div>` : ""}
+            <div class="tl-range" style="color:#b7bbc2">${weekLabel(first)}</div></div>
+            <div class="tl-empty-week" style="grid-column:2 / span 7"></div></div>`;
+        } else {
+          g += `<div class="tl-row"><div class="tl-wk">
+            <div class="tl-range" style="color:#b7bbc2;font-weight:600">${weekLabel(last).split(" – ")[0]} – ${weekLabel(first).split(" – ").pop()}</div></div>
+            <div class="tl-empty-week" style="grid-column:2 / span 7;text-align:center">· ${gap.length} weeks with nothing logged ·</div></div>`;
+        }
+        gap = [];
+      };
+
+      const byMonday = {};
+      weeks.forEach(w => { byMonday[w.monday] = w; });
+      const oldest = dayOf(weeks[weeks.length - 1].monday);
+      // Start from this week even when nothing is logged in it yet. An empty
+      // current row is the whole point when a streak is riding on it.
+      const now = new Date();
+      const thisMon = addDays(new Date(now.getFullYear(), now.getMonth(), now.getDate()),
+                              -((now.getDay() + 6) % 7));
+      const latest = dayOf(weeks[0].monday);
+      const newest = (!year || year === "all") && thisMon > latest ? thisMon : latest;
+
+      for (let mon = new Date(newest); mon >= oldest; mon = addDays(mon, -7)) {
+        const iso = `${mon.getFullYear()}-${String(mon.getMonth()+1).padStart(2,"0")}-${String(mon.getDate()).padStart(2,"0")}`;
+        const w = byMonday[iso];
+        if (!w) { gap.push(new Date(mon)); continue; }
+        flushGap();
+
+        const yr = mon.getFullYear(), showYr = yr !== prevYear; prevYear = yr;
+        g += `<div class="tl-row"><div class="tl-wk">
+          ${showYr ? `<div class="tl-year">${yr}</div>` : ""}
+          <div class="tl-range">${weekLabel(mon)}</div>
+          ${anyDist && w.distance_m ? `<div class="tl-total-k">Total distance</div>
+            <div class="tl-total-v">${Units.fmtDistance(w.distance_m, 1)}</div>` : ""}
+          <div class="tl-total-k">${w.count} activit${w.count === 1 ? "y" : "ies"}</div></div>`;
+
+        for (let c = 0; c < 7; c++) {
+          g += `<div class="tl-day">`;
+          for (const a of w.days[c]) {
+            const d = dia(a.distance_m || 0);
+            const txt = !a.distance_m ? ""
+              : a.readout === "swim_pace" ? Math.round(a.distance_m) + "m"
+              : Units.distance(a.distance_m).toFixed(a.distance_m >= 16093 ? 0 : 1);
+            g += `<div class="tl-act" data-id="${esc(a.activity_id)}" title="${esc(a.name)} — ${fmtDist(a, a.distance_m)} · ${fmtDur(a.duration_s)}">
+              <div class="tl-bubble" style="width:${d}px;height:${d}px;background:${groupColor(a.group)};font-size:${txt.length > 4 ? 10 : d < 42 ? 11 : 13}px">${txt}</div>
+              <div class="tl-name">${esc(a.name)}</div></div>`;
+          }
+          g += `</div>`;
+        }
+        g += `</div>`;
+      }
+      flushGap();
+      g += `</div>`;
+
+      $("a-root").innerHTML = html + g;
+      wireBar();
+      $("a-root").querySelectorAll(".tl-act[data-id]").forEach(el =>
+        el.onclick = () => openDetail(el.dataset.id));
+    }
+
     function renderList() {
       const header = `<div class="a-row head">` + COLS.map(c =>
         c.key ? `<span data-sort="${c.key}" class="${sort === c.key ? "on" : ""}">${c.label}${
@@ -230,22 +407,11 @@
             rows.length < total ? ` · showing ${rows.length}` : ""}</div>
         </div>
         ${chipBar()}
+        ${streakBanner()}
         <div class="a-card">${header}${body}</div>
         ${more}`;
 
-      $("a-root").querySelectorAll(".a-chip").forEach(b =>
-        b.onclick = () => { group = b.dataset.g; reload(); });
-      // One segment element, reused across renders — Units.segment() registers a
-      // listener each call, so building a fresh one per render would leak them.
-      unitSeg = unitSeg || Units.segment();
-      $("a-units").appendChild(unitSeg);
-      $("a-year").onchange = e => { year = e.target.value; reload(); };
-      let timer = null;
-      $("a-search").oninput = e => {
-        clearTimeout(timer);
-        const v = e.target.value;
-        timer = setTimeout(() => { search = v; reload(true); }, 250);
-      };
+      wireBar();
       $("a-root").querySelectorAll("[data-sort]").forEach(s =>
         s.onclick = () => {
           if (sort === s.dataset.sort) desc = !desc;
@@ -258,6 +424,39 @@
         r.onclick = () => openDetail(r.dataset.id));
     }
 
+    /** Controls shared by both views, rewired after every render. */
+    let searchTimer = null;
+    function wireBar() {
+      $("a-root").querySelectorAll(".a-chip").forEach(b =>
+        b.onclick = () => { group = b.dataset.g; reload(); });
+      $("a-root").querySelectorAll(".a-views button").forEach(b =>
+        b.onclick = () => setView(b.dataset.v));
+      // One segment element, reused across renders — Units.segment() registers a
+      // listener each call, so building a fresh one per render would leak them.
+      unitSeg = unitSeg || Units.segment();
+      $("a-units").appendChild(unitSeg);
+      $("a-year").onchange = e => { year = e.target.value; reload(); };
+      $("a-search").oninput = e => {
+        clearTimeout(searchTimer);
+        const v = e.target.value;
+        searchTimer = setTimeout(() => { search = v; reload(); }, 250);
+      };
+      if (search && $("a-search")) {
+        const el = $("a-search");
+        el.focus(); el.setSelectionRange(el.value.length, el.value.length);
+      }
+    }
+
+    function setView(v) {
+      if (v === view) return;
+      view = v;
+      localStorage.setItem("activitiesView", v);
+      const p = new URLSearchParams(location.search);
+      if (v === "grid") p.set("view", "grid"); else p.delete("view");
+      history.replaceState({}, "", location.pathname + (p.toString() ? "?" + p : ""));
+      loadPage(true);
+    }
+
     let detailed = new Set();
     let unitSeg = null;
 
@@ -265,27 +464,40 @@
       if (loading) return;
       loading = true;
       if (reset) { offset = 0; rows = []; }
-      const p = new URLSearchParams({
-        group, year, search, sort, desc: desc ? 1 : 0,
-        limit: PAGE, offset: String(offset),
-      });
-      const r = await fetch("/api/activities?" + p).then(r => r.json());
-      facets = r.facets;
-      facets.totalAll = facets.groups.reduce((n, g) => n + g.count, 0);
-      total = r.total;
-      rows = rows.concat(r.activities);
-      (r.detailed || []).forEach(id => detailed.add(id));
-      offset += r.activities.length;
-      loading = false;
-      renderList();
-      // Keep focus in the search box across a debounced reload.
-      if (search && $("a-search")) {
-        const el = $("a-search");
-        el.focus(); el.setSelectionRange(el.value.length, el.value.length);
+      try {
+        if (view === "grid") {
+          const r = await fetch("/api/activities/weeks?" +
+            new URLSearchParams({ group, year, search })).then(r => r.json());
+          takeFacets(r);
+          weeks = r.weeks;
+          streaks = r.streaks;
+          total = r.total;
+          renderGrid();
+        } else {
+          const p = new URLSearchParams({
+            group, year, search, sort, desc: desc ? 1 : 0,
+            limit: PAGE, offset: String(offset),
+          });
+          const r = await fetch("/api/activities?" + p).then(r => r.json());
+          takeFacets(r);
+          streaks = r.streaks;
+          total = r.total;
+          rows = rows.concat(r.activities);
+          (r.detailed || []).forEach(id => detailed.add(id));
+          offset += r.activities.length;
+          renderList();
+        }
+      } finally {
+        loading = false;
       }
     }
 
-    const reload = keepSearch => loadPage(true);
+    function takeFacets(r) {
+      facets = r.facets;
+      facets.totalAll = facets.groups.reduce((n, g) => n + g.count, 0);
+    }
+
+    const reload = () => loadPage(true);
 
     // ── detail ────────────────────────────────────────────────────────
     const ZONE_COLORS = ["#9aa7d8", "#7cb342", "#f5b942", "#ef8b4b", "#d9534f"];
@@ -395,7 +607,8 @@
 
     async function openDetail(id) {
       detailId = id;
-      history.pushState({ id }, "", "?id=" + encodeURIComponent(id));
+      history.pushState({ id }, "",
+        "?id=" + encodeURIComponent(id) + (view === "grid" ? "&view=grid" : ""));
       $("a-root").innerHTML = `<div class="a-load">Loading activity…<br>
         <span style="font-size:12px">Fetching splits and heart-rate zones from Garmin if this is the first time.</span></div>`;
 
@@ -461,11 +674,15 @@
       if (d.fetched_now) detailed.add(id);
     }
 
+    const viewUrl = () => location.pathname + (view === "grid" ? "?view=grid" : "");
+
     function closeDetail() {
       detailId = null;
-      history.pushState({}, "", location.pathname);
+      history.pushState({}, "", viewUrl());
       if (lapChart) { lapChart.destroy(); lapChart = null; }
-      if (rows.length) renderList(); else loadPage(true);
+      if (view === "grid" && weeks.length) renderGrid();
+      else if (view === "list" && rows.length) renderList();
+      else loadPage(true);
     }
 
     window.onpopstate = () => {
@@ -473,7 +690,28 @@
       if (id) openDetail(id); else closeDetail();
     };
 
-    Units.onChange(() => { if (detailId) openDetail(detailId); else if (rows.length) renderList(); });
+    Units.onChange(() => {
+      if (detailId) openDetail(detailId);
+      else if (view === "grid") renderGrid();
+      else if (rows.length) renderList();
+    });
+
+    $("a-refresh").onclick = async () => {
+      const btn = $("a-refresh");
+      btn.disabled = true;
+      const label = btn.innerHTML;
+      btn.innerHTML = '… <span class="btn-text">Syncing</span>';
+      try {
+        await fetch("/api/training-log?refresh=1");
+        detailed.clear();
+        await loadPage(true);
+      } catch (e) {
+        alert("Could not re-sync from Garmin: " + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = label;
+      }
+    };
 
     (async () => {
       await loadPage(true);

@@ -9,7 +9,7 @@ tested against the real cache without touching the network.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 # Distance-based activities where pace (time per unit) is the natural readout.
 # For everything else speed is more meaningful, and for some there is no
@@ -383,3 +383,113 @@ def find(activities: list[dict], activity_id: str) -> dict | None:
         if str(a.get("activity_id")) == target:
             return a
     return None
+
+
+# ── weekly grid + streaks ───────────────────────────────────────────────────
+
+def _monday_of(day: date) -> date:
+    """The Monday that starts this day's week."""
+    return day - timedelta(days=day.weekday())
+
+
+def _parse_day(value: str) -> date | None:
+    try:
+        return date.fromisoformat((value or "")[:10])
+    except ValueError:
+        return None
+
+
+def weekly_buckets(rows: list[dict]) -> list[dict]:
+    """
+    Group summarised activities into Monday-start weeks, newest first.
+
+    Each week carries its activities already split across seven day slots, so
+    the grid can render straight from this without doing date maths in the
+    browser. Weeks with nothing in them are omitted; the page decides how to
+    draw the gaps between them.
+    """
+    weeks: dict[date, dict] = {}
+    for r in rows:
+        day = _parse_day(r.get("date"))
+        if day is None:
+            continue
+        mon = _monday_of(day)
+        wk = weeks.get(mon)
+        if wk is None:
+            wk = weeks[mon] = {
+                "monday": mon.isoformat(),
+                "year": mon.year,
+                "days": [[] for _ in range(7)],
+                "count": 0,
+                "distance_m": 0.0,
+                "duration_s": 0.0,
+            }
+        wk["days"][day.weekday()].append(r)
+        wk["count"] += 1
+        wk["distance_m"] += r.get("distance_m") or 0.0
+        wk["duration_s"] += r.get("duration_s") or 0.0
+
+    out = [weeks[m] for m in sorted(weeks, reverse=True)]
+    for wk in out:
+        # Longest first within a day looks tidiest in the grid.
+        for slot in wk["days"]:
+            slot.sort(key=lambda r: r.get("distance_m") or 0, reverse=True)
+    return out
+
+
+def weekly_streaks(rows: list[dict], today: date | None = None) -> dict:
+    """
+    Consecutive-week activity streaks over the given (already filtered) rows.
+
+    A week counts once it holds at least one activity, so this measures
+    consistency rather than volume — which is the habit actually worth keeping.
+
+    The current week is treated as grace, not as a break: it is still in
+    progress, so an empty Monday morning should not appear to end a streak that
+    is in fact intact. The same rule the daily habit tracker uses.
+    """
+    today = today or date.today()
+    this_monday = _monday_of(today)
+
+    active = set()
+    for r in rows:
+        day = _parse_day(r.get("date"))
+        if day is not None:
+            active.add(_monday_of(day))
+    if not active:
+        return {"current": 0, "longest": 0, "longest_start": None,
+                "longest_end": None, "active_weeks": 0, "this_week": False,
+                "in_grace": False}
+
+    # Longest run of consecutive weeks anywhere in the history.
+    ordered = sorted(active)
+    longest = run = 1
+    run_start = best_start = best_end = ordered[0]
+    for prev, cur in zip(ordered, ordered[1:]):
+        if cur - prev == timedelta(days=7):
+            run += 1
+        else:
+            run, run_start = 1, cur
+        if run > longest:
+            longest, best_start, best_end = run, run_start, cur
+
+    # Current streak, counting back from this week or the one before it.
+    this_week = this_monday in active
+    anchor = this_monday if this_week else this_monday - timedelta(days=7)
+    current = 0
+    cursor = anchor
+    while cursor in active:
+        current += 1
+        cursor -= timedelta(days=7)
+
+    return {
+        "current": current,
+        "longest": max(longest, current),
+        "longest_start": best_start.isoformat(),
+        "longest_end": best_end.isoformat(),
+        "active_weeks": len(active),
+        "this_week": this_week,
+        # True when the streak is being carried by last week while this one is
+        # still open, so the page can say so instead of implying it is banked.
+        "in_grace": bool(current and not this_week),
+    }

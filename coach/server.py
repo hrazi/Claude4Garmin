@@ -600,15 +600,14 @@ async def _load_activity_history(force_refresh: bool = False) -> dict:
         }
 
 
-@app.get("/training-log", response_class=HTMLResponse)
-async def training_log_page(request: Request):
-    if not garmin_connected:
-        return RedirectResponse("/settings")
-    settings = sm.load_settings()
-    return templates.TemplateResponse(request, "training_log.html", {
-        "request": request,
-        "athlete_profile": settings.get("athlete_profile") or {},
-    })
+@app.get("/training-log")
+async def training_log_page():
+    """
+    The Training Log's weekly grid now lives on /activities as its grid view,
+    where the same filters and click-through detail apply to it. Kept as a
+    redirect so existing bookmarks and links still land somewhere useful.
+    """
+    return RedirectResponse("/activities?view=grid", status_code=308)
 
 
 @app.get("/api/training-log")
@@ -645,11 +644,38 @@ async def api_activities(group: str = "", year: str = "", search: str = "",
                       limit=min(max(1, limit), 200), offset=offset)
     result["facets"] = av.facets(acts)
     result["fetched_at"] = history.get("fetched_at")
+    # Streaks describe the whole filtered set, not the page, so they are
+    # computed before paging rather than from the rows being returned.
+    result["streaks"] = av.weekly_streaks(
+        av.query(acts, group=group, year=year, search=search,
+                 limit=len(acts) or 1)["activities"])
     # Which of these rows already have enrichment, so the list can show it
     # without a round trip per row.
     result["detailed"] = [a["activity_id"] for a in result["activities"]
                           if a["activity_id"] in activity_details]
     return JSONResponse(result)
+
+
+@app.get("/api/activities/weeks")
+async def api_activity_weeks(group: str = "", year: str = "", search: str = ""):
+    """
+    Week-by-week buckets for the grid view, plus consistency streaks.
+
+    Declared before /api/activities/{activity_id} on purpose: FastAPI matches
+    routes in definition order, and "weeks" would otherwise be swallowed as an
+    activity id.
+    """
+    history = await _load_activity_history()
+    acts = history.get("activities") or []
+    rows = av.query(acts, group=group, year=year, search=search,
+                    limit=len(acts) or 1, offset=0)["activities"]
+    return JSONResponse({
+        "weeks":      av.weekly_buckets(rows),
+        "streaks":    av.weekly_streaks(rows),
+        "total":      len(rows),
+        "facets":     av.facets(acts),
+        "fetched_at": history.get("fetched_at"),
+    })
 
 
 async def _fetch_activity_detail(activity_id: str) -> dict:
