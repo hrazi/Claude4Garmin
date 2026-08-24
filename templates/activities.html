@@ -130,6 +130,38 @@
                        -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
     .tl-empty-week { color:#c3c7cd; font-size:12px; padding:10px 0; }
     .chart-box { position:relative; height:230px; }
+
+    /* manual entry */
+    .a-modal-back { position:fixed; inset:0; background:rgba(20,22,26,.45); display:flex;
+      align-items:flex-start; justify-content:center; padding:40px 16px; z-index:60; overflow-y:auto; }
+    /* A class-level display beats the user-agent [hidden] rule, so without
+       this the dialog covers the page on every load. */
+    .a-modal-back[hidden] { display:none; }
+    .a-modal { background:#fff; border-radius:14px; width:min(620px,100%);
+      box-shadow:0 18px 50px rgba(0,0,0,.22); padding:22px 24px 18px; }
+    .am-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+    .am-title { font-size:17px; font-weight:600; color:#2b2f36; }
+    .am-sub { font-size:12.5px; color:#8a8f98; margin-top:3px; line-height:1.5; }
+    .am-x { border:0; background:none; font-size:24px; line-height:1; color:#9aa0a8; cursor:pointer; padding:0 4px; }
+    .am-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px 14px; margin-top:18px; }
+    .am-f { display:flex; flex-direction:column; gap:5px; font-size:12px; color:#6b7079; }
+    .am-f > span { font-weight:500; }
+    .am-f em { font-style:normal; color:#a8adb5; }
+    .am-wide { grid-column:1 / -1; }
+    .am-f input, .am-f select { padding:8px 10px; border:1px solid #d7dae0; border-radius:8px;
+      font-size:14px; color:#2b2f36; background:#fff; width:100%; box-sizing:border-box; }
+    .am-f input:focus, .am-f select:focus { outline:2px solid #bcd3fb; outline-offset:-1px; border-color:#7aa9f7; }
+    .am-dur { display:flex; align-items:center; gap:6px; }
+    .am-dur input { width:100%; }
+    .am-dur em { font-style:normal; color:#9aa0a8; font-size:12px; margin-right:4px; }
+    .am-msg { margin-top:14px; font-size:13px; line-height:1.55; min-height:18px; }
+    .am-msg.bad { color:#b3261e; }
+    .am-msg.warn { color:#8a5a00; background:#fff8e6; border:1px solid #ffe3a3;
+      border-radius:8px; padding:10px 12px; }
+    .am-foot { display:flex; justify-content:flex-end; gap:10px; margin-top:16px; }
+    .a-manual-tag { font-size:10px; letter-spacing:.04em; text-transform:uppercase;
+      background:#eef2ff; color:#4a5bbf; border-radius:999px; padding:2px 7px; margin-left:7px; }
+    @media (max-width:560px) { .am-grid { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
@@ -141,9 +173,81 @@
       <a href="/analytics" class="btn-ghost">🔬 <span class="btn-text">Analytics</span></a>
       <a href="/daily" class="btn-ghost">📅 <span class="btn-text">Daily</span></a>
       <a href="/settings" class="btn-ghost">⚙ <span class="btn-text">Settings</span></a>
+      <button id="a-add" class="btn-ghost" title="Log a session no device recorded">＋ <span class="btn-text">Add</span></button>
       <button id="a-refresh" class="btn-ghost" title="Re-fetch the full history from Garmin">↻ <span class="btn-text">Sync</span></button>
     </div>
   </header>
+
+  <div class="a-modal-back" id="am-back" hidden>
+    <div class="a-modal" role="dialog" aria-modal="true" aria-labelledby="am-title">
+      <div class="am-head">
+        <div>
+          <div class="am-title" id="am-title">Add an activity</div>
+          <div class="am-sub">For sessions no connected device recorded, such as another watch or a gym machine.</div>
+        </div>
+        <button class="am-x" id="am-close" aria-label="Close">×</button>
+      </div>
+
+      <div class="am-grid">
+        <label class="am-f am-wide"><span>Name</span>
+          <input id="m-name" placeholder="Afternoon Run"></label>
+
+        <label class="am-f"><span>Date</span>
+          <input id="m-date" type="date"></label>
+        <label class="am-f"><span>Start time</span>
+          <input id="m-time" type="time" value="12:00"></label>
+
+        <label class="am-f am-wide"><span>Activity type</span>
+          <select id="m-type">
+            <option value="running">Run</option>
+            <option value="treadmill_running">Treadmill run</option>
+            <option value="trail_running">Trail run</option>
+            <option value="cycling">Ride</option>
+            <option value="indoor_cycling">Indoor ride</option>
+            <option value="lap_swimming">Pool swim</option>
+            <option value="open_water_swimming">Open water swim</option>
+            <option value="walking">Walk</option>
+            <option value="hiking">Hike</option>
+            <option value="strength_training">Strength</option>
+            <option value="indoor_cardio">Cardio</option>
+            <option value="elliptical">Elliptical</option>
+            <option value="rowing_v2">Rowing</option>
+            <option value="other">Other</option>
+          </select></label>
+
+        <div class="am-f am-wide"><span>Duration</span>
+          <div class="am-dur">
+            <input id="m-h" type="number" min="0" max="24" placeholder="0"><em>h</em>
+            <input id="m-m" type="number" min="0" max="59" placeholder="32"><em>m</em>
+            <input id="m-s" type="number" min="0" max="59" placeholder="36"><em>s</em>
+          </div></div>
+
+        <label class="am-f"><span>Distance <em id="m-dist-unit">(mi)</em></span>
+          <input id="m-dist" type="number" step="0.01" min="0" placeholder="2.41"></label>
+        <label class="am-f"><span>Calories</span>
+          <input id="m-cal" type="number" min="0" placeholder="360"></label>
+
+        <label class="am-f"><span>Avg heart rate</span>
+          <input id="m-hr" type="number" min="20" max="240" placeholder="157"></label>
+        <label class="am-f"><span>Max heart rate</span>
+          <input id="m-maxhr" type="number" min="20" max="240" placeholder=""></label>
+
+        <label class="am-f"><span>Elevation gain <em id="m-elev-unit">(ft)</em></span>
+          <input id="m-elev" type="number" min="0" placeholder=""></label>
+        <label class="am-f"><span>Recorded on</span>
+          <input id="m-device" placeholder="Apple Watch Series 8"></label>
+
+        <label class="am-f am-wide"><span>Note</span>
+          <input id="m-note" placeholder="Optional"></label>
+      </div>
+
+      <div class="am-msg" id="am-msg"></div>
+      <div class="am-foot">
+        <button class="btn-ghost" id="am-cancel">Cancel</button>
+        <button class="btn-primary" id="am-save">Save activity</button>
+      </div>
+    </div>
+  </div>
 
   <div class="a-wrap" id="a-root">
     <div class="a-load">Loading your activities…</div>
@@ -255,7 +359,7 @@
       return `<div class="a-row" data-id="${esc(a.activity_id)}">
         <div class="a-dim">${fmtDate(a.date)}</div>
         <div style="font-size:15px">${a.icon}</div>
-        <div class="a-name">${esc(a.name)}${hasDetail ? '<span class="a-dot" title="Detail already downloaded"></span>' : ""}
+        <div class="a-name">${esc(a.name)}${hasDetail ? '<span class="a-dot" title="Detail already downloaded"></span>' : ""}${a.source === "manual" ? `<span class="a-manual-tag" title="${esc(a.device_name ? "Added by hand — recorded on " + a.device_name : "Added by hand; no device recorded this")}">manual</span>` : ""}
           <div class="a-sub">${esc(a.type_label)}</div></div>
         <div class="a-num">${fmtDist(a, a.distance_m)}</div>
         <div class="a-num">${fmtDur(a.duration_s)}</div>
@@ -667,17 +771,33 @@
 
       const missing = !d.has_detail
         ? `<div class="a-dcard"><div class="a-empty">
-             ${d.errors.length || d.summary == null
+             ${a.source === "manual"
+               ? "Added by hand, so there are no splits or heart-rate zones behind it."
+               : d.errors.length || d.summary == null
                ? "Garmin did not return detail for this activity."
                : "No splits or heart-rate zones were recorded for this activity."}
            </div></div>`
+        : "";
+
+      // Hand-entered sessions get an explicit provenance line and the only
+      // delete control in the app: they were typed in, so they can be typed
+      // wrong, and nothing upstream will ever correct them.
+      const manualBox = a.source === "manual"
+        ? `<div class="a-dcard">
+             <div class="a-dsub" style="margin:0 0 10px">
+               Added by hand${a.device_name ? ` · recorded on ${esc(a.device_name)}` : ""}.
+               No device data backs these figures.
+               ${a.note ? `<br><em>${esc(a.note)}</em>` : ""}
+             </div>
+             <button class="btn-ghost" id="a-del" data-id="${esc(a.activity_id)}">Delete this entry</button>
+           </div>`
         : "";
 
       $("a-root").innerHTML = `
         <button class="a-back" id="a-back">← All activities</button>
         ${warn}
         <div class="a-dcard">
-          <h3>${a.icon} ${esc(a.name)}</h3>
+          <h3>${a.icon} ${esc(a.name)}${a.source === "manual" ? '<span class="a-manual-tag">manual</span>' : ""}</h3>
           <div class="a-dsub">${esc(a.type_label)} · ${fmtDate(a.date)}${
             a.start_time ? " · " + esc(a.start_time.slice(11, 16)) : ""}</div>
           <div class="a-stats">${stats}</div>
@@ -686,10 +806,28 @@
         ${zoneBlock("Power zones", d.power_zones, "W")}
         ${lapsBlock(d.splits, a.readout)}
         ${setsBlock(d.exercise_sets)}
+        ${manualBox}
         ${missing}
         ${d.fetched_at ? `<div class="a-note">Detail downloaded ${esc(d.fetched_at.replace("T", " "))}.</div>` : ""}`;
 
       $("a-back").onclick = closeDetail;
+      const del = $("a-del");
+      if (del) del.onclick = async () => {
+        if (!confirm("Delete this hand-entered activity? This cannot be undone.")) return;
+        del.disabled = true;
+        try {
+          const r = await fetch("/api/activities/manual/" + encodeURIComponent(del.dataset.id),
+                                { method: "DELETE" });
+          const j = await r.json();
+          if (!r.ok) throw new Error(j.error || j.detail || `HTTP ${r.status}`);
+          closeDetail();
+          detailed.clear();
+          await loadPage(true);
+        } catch (e) {
+          alert("Could not delete: " + e.message);
+          del.disabled = false;
+        }
+      };
       drawLapChart(d.splits, a.readout);
       if (d.fetched_now) detailed.add(id);
     }
@@ -745,6 +883,120 @@
         btn.innerHTML = label;
       }
     };
+
+    // ── Manual entry ────────────────────────────────────────────────
+    // For sessions no connected device holds. Three whole weeks of running
+    // were missing from Garmin because they were recorded on another watch,
+    // which under-reported a 72-week streak as 45.
+    (function () {
+      const back = $("am-back"), msg = $("am-msg");
+      const imperial = () => (window.Units ? Units.get() : "km") === "mi";
+
+      function say(text, tone) {
+        msg.className = "am-msg" + (tone ? " " + tone : "");
+        msg.innerHTML = text || "";
+      }
+
+      function open() {
+        const mi = imperial();
+        $("m-dist-unit").textContent = mi ? "(mi)" : "(km)";
+        $("m-elev-unit").textContent = mi ? "(ft)" : "(m)";
+        $("m-date").value = new Date().toISOString().slice(0, 10);
+        $("m-date").max = new Date().toISOString().slice(0, 10);
+        say("");
+        back.hidden = false;
+        $("m-name").focus();
+      }
+
+      function close() {
+        back.hidden = true;
+        ["m-name","m-h","m-m","m-s","m-dist","m-cal","m-hr","m-maxhr","m-elev","m-device","m-note"]
+          .forEach(id => { $(id).value = ""; });
+        pendingDuplicate = false;
+      }
+
+      let pendingDuplicate = false;
+
+      function payload() {
+        const mi = imperial();
+        const dist = parseFloat($("m-dist").value);
+        const elev = parseFloat($("m-elev").value);
+        return {
+          name: $("m-name").value,
+          date: $("m-date").value,
+          start_time: $("m-time").value,
+          type: $("m-type").value,
+          hours: $("m-h").value, minutes: $("m-m").value, seconds: $("m-s").value,
+          // Entered in whatever units the page is showing, stored canonically
+          // in metres so it cannot drift when the toggle changes.
+          distance_meters: isFinite(dist) ? (mi ? dist * 1609.344 : dist * 1000) : "",
+          elevation_gain: isFinite(elev) ? (mi ? elev * 0.3048 : elev) : "",
+          calories: $("m-cal").value,
+          avg_hr: $("m-hr").value,
+          max_hr: $("m-maxhr").value,
+          device_name: $("m-device").value,
+          note: $("m-note").value,
+          confirm_duplicate: pendingDuplicate,
+        };
+      }
+
+      async function save() {
+        const btn = $("am-save");
+        btn.disabled = true;
+        btn.textContent = "Saving…";
+        try {
+          const r = await fetch("/api/activities/manual", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload()),
+          });
+          const j = await r.json();
+
+          if (r.status === 409 && j.duplicate) {
+            // A warning, not a refusal: two sessions of the same sport on one
+            // day is a real thing people do.
+            const d = j.duplicate;
+            const km = (d.distance_meters || 0) / 1000;
+            const shown = imperial() ? `${(km * 0.621371).toFixed(2)} mi` : `${km.toFixed(2)} km`;
+            say(`This looks like one you already have: <strong>${esc(d.name || d.type)}</strong> `
+              + `on ${esc(d.start_time || d.date)} (${shown}). `
+              + `Press Save again to add it anyway.`, "warn");
+            pendingDuplicate = true;
+            return;
+          }
+          if (!r.ok || j.error) throw new Error(j.error || `HTTP ${r.status}`);
+
+          close();
+          detailed.clear();
+          await loadPage(true);
+          const el = document.createElement("div");
+          el.className = "a-flash";
+          el.textContent = "Activity added";
+          document.body.appendChild(el);
+          setTimeout(() => el.remove(), 3000);
+        } catch (e) {
+          say("Could not save: " + esc(e.message), "bad");
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "Save activity";
+        }
+      }
+
+      $("a-add").onclick = open;
+      $("am-close").onclick = close;
+      $("am-cancel").onclick = close;
+      $("am-save").onclick = save;
+      back.addEventListener("click", e => { if (e.target === back) close(); });
+      document.addEventListener("keydown", e => {
+        if (e.key === "Escape" && !back.hidden) close();
+      });
+      // Editing any field retracts the duplicate override, so a confirmation
+      // cannot silently carry over to a different activity.
+      document.querySelectorAll(".am-grid input, .am-grid select").forEach(el => {
+        el.addEventListener("input", () => {
+          if (pendingDuplicate) { pendingDuplicate = false; say(""); }
+        });
+      });
+    })();
 
     (async () => {
       await loadPage(true);

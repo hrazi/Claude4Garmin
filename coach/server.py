@@ -54,8 +54,8 @@ from . import goals as gl
 from . import weekly_review as wr
 from . import analytics as an
 from . import pillars as pl
-from . import strava_client as sv
 from . import activity_dedupe as dedupe
+from . import manual_activities as ma
 from . import checkin as ci
 from . import fueling as fl
 from .garmin_client import get_garmin_client, fetch_health_data, fetch_activity_history, format_health_summary, format_trend_summary, fill_readiness_estimates, backfill_sleep_times
@@ -141,6 +141,42 @@ def _extra_context_notes(hd: dict, settings: dict) -> str:
     return "\n\n".join(parts)
 
 
+def _health_data_for_coach() -> dict:
+    """
+    health_data with hand-entered activities folded into the recent window.
+
+    The coach reads health_data, not the training log, so without this a
+    session logged by hand would be invisible to it: the athlete would add
+    yesterday's run and then be told they had not trained. Only manual
+    activities inside the existing window are added, so the coach's view keeps
+    the same time horizon rather than quietly growing a tail of old sessions.
+
+    Returns a shallow copy; health_data itself is never mutated, because it is
+    written back to the Garmin cache and manual rows must not leak into it.
+    """
+    if not health_data:
+        return health_data
+    recorded = health_data.get("activities") or []
+    manual = ma.load_manual()
+    if not manual:
+        return health_data
+
+    # Anchor to the window the fetch actually covered. With no recorded
+    # activities at all there is no window to respect, so fall back to the
+    # configured count.
+    oldest = min((str(a.get("date") or "") for a in recorded if a.get("date")), default="")
+    in_window = [m for m in manual if not oldest or str(m.get("date") or "") >= oldest]
+
+    merged = sorted(
+        list(recorded) + in_window,
+        key=lambda r: (str(r.get("date") or ""), str(r.get("start_time") or "")),
+        reverse=True,
+    )
+    out = dict(health_data)
+    out["activities"] = merged
+    return out
+
+
 def _build_coach_summary(settings: dict) -> str:
     """
     Build the full system-context string for the coach from current global
@@ -151,7 +187,7 @@ def _build_coach_summary(settings: dict) -> str:
     memory_notes = mm.format_memory_for_prompt(mm.load_memory())
     extra_notes = _extra_context_notes(health_data, settings) if health_data else ""
     return format_health_summary(
-        health_data, settings, nutrition_data, nutrition_log,
+        _health_data_for_coach(), settings, nutrition_data, nutrition_log,
         memory_notes=memory_notes,
         trend_summary=trend_summary,
         extra_notes=extra_notes,
@@ -594,7 +630,7 @@ async def _load_activity_history(force_refresh: bool = False) -> dict:
     cache = tl.load_training_log()
     if not force_refresh and not tl.is_stale(cache):
         return {
-            "activities": cache["activities"],
+            "activities": ma.merge_into(cache["activities"]),
             "fetched_at": cache.get("fetched_at"),
             "stale": False,
             "error": None,
@@ -603,7 +639,7 @@ async def _load_activity_history(force_refresh: bool = False) -> dict:
     if garmin_client is None:
         # Not connected yet — serve whatever we have (possibly empty) and flag it.
         return {
-            "activities": (cache or {}).get("activities", []),
+            "activities": ma.merge_into((cache or {}).get("activities", [])),
             "fetched_at": (cache or {}).get("fetched_at"),
             "stale": True,
             "error": None if cache else "Not connected to Garmin yet.",
@@ -615,7 +651,10 @@ async def _load_activity_history(force_refresh: bool = False) -> dict:
         activities = tl.merge_activities(before, fetched)
         saved = tl.save_training_log(activities)
         return {
-            "activities": activities,
+            # Merged AFTER saving so hand-entered rows never leak into the
+            # Garmin cache file, which is rebuilt from Garmin and would drop
+            # them on the next refresh.
+            "activities": ma.merge_into(activities),
             "fetched_at": saved.get("fetched_at"),
             "stale": False,
             "error": None,
@@ -624,7 +663,7 @@ async def _load_activity_history(force_refresh: bool = False) -> dict:
     except Exception as e:
         # Fall back to cache on any fetch error so the page still renders.
         return {
-            "activities": (cache or {}).get("activities", []),
+            "activities": ma.merge_into((cache or {}).get("activities", [])),
             "fetched_at": (cache or {}).get("fetched_at"),
             "stale": True,
             "error": str(e),
@@ -746,6 +785,52 @@ async def _fetch_activity_detail(activity_id: str) -> dict:
     return entry
 
 
+@app.post("/api/activities/manual")
+async def api_add_manual_activity(request: Request):
+    """
+    Record a session no connected device holds.
+
+    Warns rather than blocks when the entry looks like something already in the
+    history: the duplicate check is a heuristic, and refusing outright would
+    make a genuine second session of the day impossible to log.
+    """
+    fields = await request.json()
+    try:
+        row = ma.build_row(fields)
+    except ma.ManualEntryError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    history = await _load_activity_history()
+    existing = history.get("activities") or []
+    if not fields.get("confirm_duplicate"):
+        match = dedupe.find_duplicate(row, existing)
+        if match:
+            return JSONResponse({
+                "duplicate": {
+                    "activity_id": match.get("activity_id"),
+                    "name": match.get("name"),
+                    "date": match.get("date"),
+                    "start_time": match.get("start_time"),
+                    "type": match.get("type"),
+                    "distance_meters": match.get("distance_meters"),
+                    "duration_seconds": match.get("duration_seconds"),
+                },
+            }, status_code=409)
+
+    saved = ma.add(fields)
+    return {"activity": saved, "total_manual": len(ma.load_manual())}
+
+
+@app.delete("/api/activities/manual/{activity_id}")
+async def api_delete_manual_activity(activity_id: str):
+    if not ma.is_manual(activity_id):
+        return JSONResponse({"error": "Only manually added activities can be deleted."},
+                            status_code=400)
+    if not ma.delete(activity_id):
+        raise HTTPException(404, detail="No such manual activity.")
+    return {"ok": True, "total_manual": len(ma.load_manual())}
+
+
 @app.get("/api/activities/{activity_id}")
 async def api_activity_detail(activity_id: str, fetch: int = 1):
     """One activity with its splits, HR zones and any strength sets."""
@@ -756,7 +841,9 @@ async def api_activity_detail(activity_id: str, fetch: int = 1):
 
     detail = activity_details.get(activity_id)
     fetched_now = False
-    if detail is None and fetch:
+    # A hand-entered activity exists nowhere but this machine, so asking Garmin
+    # to enrich it would be a guaranteed round trip to a 404.
+    if detail is None and fetch and not ma.is_manual(activity_id):
         try:
             detail = await _fetch_activity_detail(activity_id)
             fetched_now = True
@@ -1230,8 +1317,6 @@ async def settings_page(request: Request, error: str = "", success: str = ""):
         "lan_ip":                  _get_local_ip(),
         "app_port":                APP_PORT,
         "lan_token":               sm.load_settings().get("lan_token") or "",
-        "strava_configured":       sv.app_configured(),
-        "strava_client_id":        cm.load_credential(sv.CLIENT_ID_KEY) or "",
     })
 
 
@@ -1676,115 +1761,6 @@ async def api_refresh():
         "ok": garmin_connected,
         "error": connection_error,
     })
-
-
-# ---------------------------------------------------------------------------
-# Strava import (#28)
-# ---------------------------------------------------------------------------
-# The athlete records some sessions on an Apple Watch, which never reach Garmin
-# Connect. Strava receives uploads from both watches, so it is the only place
-# the complete history exists. Read-only; nothing is ever written to Strava.
-
-def _strava_redirect_uri(request: Request) -> str:
-    """
-    Callback URL for the OAuth round trip.
-
-    Forced to localhost rather than echoing the request host: Strava matches the
-    redirect against a single configured Authorization Callback Domain, and the
-    app is reachable on several hostnames (127.0.0.1, the LAN IP, the machine
-    name). Any of those would be rejected.
-    """
-    return f"http://localhost:{request.url.port or 8000}/api/strava/callback"
-
-
-@app.get("/api/strava/status")
-async def api_strava_status():
-    """Whether the Strava app is configured, connected, and what it holds."""
-    cache = tl.load_training_log() or {}
-    rows = cache.get("activities") or []
-    imported = [r for r in rows if r.get("source") == "strava"]
-    out = {
-        "configured": sv.app_configured(),
-        "connected": sv.is_connected(),
-        "imported": len(imported),
-        "athlete": None,
-        "error": None,
-    }
-    if out["connected"]:
-        try:
-            who = sv.athlete()
-            out["athlete"] = " ".join(
-                x for x in (who.get("firstname"), who.get("lastname")) if x
-            ) or who.get("username")
-        except sv.StravaError as e:
-            out["error"] = str(e)
-    return out
-
-
-@app.post("/api/strava/app")
-async def api_strava_save_app(
-    strava_client_id: str = Form(...),
-    strava_client_secret: str = Form(...),
-):
-    """Save the Strava API application credentials to the OS keychain."""
-    if not strava_client_id.strip() or not strava_client_secret.strip():
-        return RedirectResponse("/settings?error=strava_missing", status_code=303)
-    sv.save_app_credentials(strava_client_id, strava_client_secret)
-    return RedirectResponse("/settings?success=strava_saved#strava", status_code=303)
-
-
-@app.get("/api/strava/connect")
-async def api_strava_connect(request: Request):
-    """Send the athlete to Strava to grant read access."""
-    try:
-        return RedirectResponse(sv.authorize_url(_strava_redirect_uri(request)))
-    except sv.StravaError as e:
-        return RedirectResponse(f"/settings?error={quote(str(e))}#strava", status_code=303)
-
-
-@app.get("/api/strava/callback")
-async def api_strava_callback(request: Request, code: str = "", error: str = ""):
-    """Strava sends the athlete back here with an authorisation code."""
-    if error or not code:
-        reason = error or "Strava did not return an authorisation code."
-        return RedirectResponse(f"/settings?error={quote(reason)}#strava", status_code=303)
-    try:
-        sv.exchange_code(code)
-    except sv.StravaError as e:
-        return RedirectResponse(f"/settings?error={quote(str(e))}#strava", status_code=303)
-    return RedirectResponse("/settings?success=strava_connected#strava", status_code=303)
-
-
-@app.post("/api/strava/disconnect")
-async def api_strava_disconnect():
-    sv.disconnect()
-    return {"ok": True}
-
-
-@app.post("/api/strava/import")
-async def api_strava_import(full: bool = False):
-    """
-    Pull activities from Strava and fold in the ones Garmin never saw.
-
-    Duplicates are expected to be the overwhelming majority, since Garmin
-    forwards its own uploads to Strava. The report says how many were skipped
-    and why, so the result can be checked rather than taken on faith.
-    """
-    cache = tl.load_training_log() or {}
-    held = cache.get("activities") or []
-    try:
-        after = None if full else sv.last_import_epoch(held)
-        fetched = await asyncio.to_thread(sv.fetch_activities, after)
-    except sv.StravaError as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
-
-    merged, report = dedupe.merge_imported(held, fetched)
-    if report["added"]:
-        tl.save_training_log(merged)
-
-    report["fetched"] = len(fetched)
-    report["total"] = len(merged)
-    return report
 
 
 @app.post("/api/credentials")

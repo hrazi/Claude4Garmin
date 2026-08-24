@@ -161,6 +161,12 @@ def summarize(a: dict) -> dict:
         "elevation_gain":  _num(a.get("elevation_gain")),
         "avg_power":       _num(a.get("avg_power")),
         "avg_cadence":     _num(a.get("avg_cadence")),
+        # Hand-entered sessions must stay visibly distinguishable from recorded
+        # ones: they carry no device measurement behind them, and the athlete
+        # should never have to guess which figures were typed in.
+        "source":          a.get("source") or "garmin",
+        "device_name":     a.get("device_name"),
+        "note":            a.get("note"),
     }
 
 

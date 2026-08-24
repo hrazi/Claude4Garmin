@@ -58,16 +58,6 @@
           <div class="banner banner-error" style="margin-bottom:20px;">✗ Passwords don't match — please try again.</div>
         {% elif error == "missing_fields" %}
           <div class="banner banner-error" style="margin-bottom:20px;">✗ All fields are required.</div>
-        {% elif error == "strava_missing" %}
-          <div class="banner banner-error" style="margin-bottom:20px;">✗ Both the Strava Client ID and Secret are required.</div>
-        {% elif error %}
-          <div class="banner banner-error" style="margin-bottom:20px;">✗ {{ error }}</div>
-        {% endif %}
-
-        {% if success == "strava_saved" %}
-          <div class="banner banner-success" style="margin-bottom:20px;">✓ Strava app saved. Now click Connect Strava to authorise read access.</div>
-        {% elif success == "strava_connected" %}
-          <div class="banner banner-success" style="margin-bottom:20px;">✓ Strava connected. Use Import activities to pull in what Garmin missed.</div>
         {% endif %}
 
         {% if success == "ai_saved" %}
@@ -214,48 +204,6 @@
             </div>
           </div>
         </form>
-
-        <!-- ── Strava import (#28) ────────────────────────────────── -->
-        <div class="settings-card" id="strava" style="margin-top:20px;">
-          <div class="form-section-title">Strava import</div>
-          <p style="font-size:12.5px; color:var(--muted); line-height:1.6; margin-top:10px;">
-            Garmin only ever sees what you record on the Garmin watch. If you also
-            train with an Apple Watch or phone, those sessions never arrive here and
-            your streaks, totals and trends all under-count. Strava receives uploads
-            from every device, so importing from it fills the gaps.
-            Read-only: nothing is ever written back to Strava.
-          </p>
-
-          <div id="strava-state" style="margin-top:14px; font-size:13px;">Checking…</div>
-
-          <form method="POST" action="/api/strava/app" class="settings-form" style="margin-top:16px;">
-            <div class="form-row">
-              <div class="form-group">
-                <label for="strava_client_id">Client ID</label>
-                <input type="text" id="strava_client_id" name="strava_client_id"
-                       value="{{ strava_client_id or '' }}" placeholder="e.g. 12345" autocomplete="off">
-              </div>
-              <div class="form-group">
-                <label for="strava_client_secret">Client Secret</label>
-                <input type="password" id="strava_client_secret" name="strava_client_secret"
-                       placeholder="{% if strava_configured %}•••••••• (saved){% else %}from strava.com/settings/api{% endif %}"
-                       autocomplete="off">
-              </div>
-            </div>
-            <p style="font-size:12px; color:var(--muted); margin-top:6px;">
-              Create an app at <code>strava.com/settings/api</code> and set
-              <strong>Authorization Callback Domain</strong> to <code>localhost</code>.
-              Stored in your OS keychain, never in a file.
-            </p>
-            <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-              <button type="submit" class="btn-primary" style="min-width:140px;">Save app</button>
-              <a href="/api/strava/connect" class="btn-ghost" id="strava-connect">Connect Strava</a>
-              <button type="button" class="btn-ghost" id="strava-import">Import activities</button>
-              <button type="button" class="btn-ghost" id="strava-disconnect">Disconnect</button>
-            </div>
-          </form>
-          <div id="strava-result" style="margin-top:14px; font-size:13px; line-height:1.6;"></div>
-        </div>
 
       </div><!-- /panel-connection -->
 
@@ -1292,83 +1240,5 @@
     })();
   </script>
 
-  <script>
-    // ── Strava import (#28) ──────────────────────────────────────────
-    (function () {
-      const state = document.getElementById("strava-state");
-      const result = document.getElementById("strava-result");
-      if (!state) return;
-
-      const connectBtn = document.getElementById("strava-connect");
-      const importBtn = document.getElementById("strava-import");
-      const disconnectBtn = document.getElementById("strava-disconnect");
-
-      function show(html, tone) {
-        const colour = tone === "bad" ? "#b3261e" : tone === "good" ? "#166534" : "var(--muted)";
-        result.innerHTML = `<span style="color:${colour}">${html}</span>`;
-      }
-
-      async function refresh() {
-        try {
-          const r = await fetch("/api/strava/status");
-          const s = await r.json();
-          let msg;
-          if (!s.configured) {
-            msg = "Not set up yet. Save your Client ID and Secret below.";
-          } else if (!s.connected) {
-            msg = "App saved. Click <strong>Connect Strava</strong> to authorise read access.";
-          } else if (s.error) {
-            msg = `Connected, but Strava refused the request: ${s.error}`;
-          } else {
-            msg = `Connected as <strong>${s.athlete || "athlete"}</strong>.`
-                + ` ${s.imported} activit${s.imported === 1 ? "y" : "ies"} imported so far.`;
-          }
-          state.innerHTML = msg;
-          importBtn.style.display = s.connected ? "" : "none";
-          disconnectBtn.style.display = s.connected ? "" : "none";
-          connectBtn.textContent = s.connected ? "Re-connect Strava" : "Connect Strava";
-        } catch (e) {
-          state.textContent = "Could not read Strava status: " + e.message;
-        }
-      }
-
-      importBtn.onclick = async () => {
-        const full = !confirm(
-          "Import only activities newer than the last import?\n\n" +
-          "OK = incremental (fast).\nCancel = full history (use this the first time).");
-        importBtn.disabled = true;
-        importBtn.textContent = "Importing…";
-        show("Asking Strava for your activities. This can take a moment.");
-        try {
-          const r = await fetch("/api/strava/import?full=" + (full ? "true" : "false"), { method: "POST" });
-          const j = await r.json();
-          if (j.error) throw new Error(j.error);
-          // Duplicates are the expected majority, so say so plainly rather
-          // than letting a big "skipped" number read as a failure.
-          let html = `Fetched <strong>${j.fetched}</strong> from Strava. `
-                   + `Added <strong>${j.added}</strong> that Garmin never had. `
-                   + `Skipped ${j.duplicates} already-held duplicate${j.duplicates === 1 ? "" : "s"}`
-                   + ` (${j.by_external_id} matched by Garmin upload id, ${j.by_overlap} by overlapping time).`;
-          if (j.added) html += ` Reload Activities to see them.`;
-          show(html, j.added ? "good" : null);
-          refresh();
-        } catch (e) {
-          show("Import failed: " + e.message, "bad");
-        } finally {
-          importBtn.disabled = false;
-          importBtn.textContent = "Import activities";
-        }
-      };
-
-      disconnectBtn.onclick = async () => {
-        if (!confirm("Disconnect Strava? Already-imported activities are kept.")) return;
-        await fetch("/api/strava/disconnect", { method: "POST" });
-        show("Disconnected. Imported activities were kept.");
-        refresh();
-      };
-
-      refresh();
-    })();
-  </script>
 </body>
 </html>
