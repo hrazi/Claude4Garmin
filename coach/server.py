@@ -29,6 +29,7 @@ import threading
 import webbrowser
 from datetime import datetime, date, timedelta
 from pathlib import Path
+from urllib.parse import quote
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -53,6 +54,8 @@ from . import goals as gl
 from . import weekly_review as wr
 from . import analytics as an
 from . import pillars as pl
+from . import strava_client as sv
+from . import activity_dedupe as dedupe
 from . import checkin as ci
 from . import fueling as fl
 from .garmin_client import get_garmin_client, fetch_health_data, fetch_activity_history, format_health_summary, format_trend_summary, fill_readiness_estimates, backfill_sleep_times
@@ -1227,6 +1230,8 @@ async def settings_page(request: Request, error: str = "", success: str = ""):
         "lan_ip":                  _get_local_ip(),
         "app_port":                APP_PORT,
         "lan_token":               sm.load_settings().get("lan_token") or "",
+        "strava_configured":       sv.app_configured(),
+        "strava_client_id":        cm.load_credential(sv.CLIENT_ID_KEY) or "",
     })
 
 
@@ -1671,6 +1676,115 @@ async def api_refresh():
         "ok": garmin_connected,
         "error": connection_error,
     })
+
+
+# ---------------------------------------------------------------------------
+# Strava import (#28)
+# ---------------------------------------------------------------------------
+# The athlete records some sessions on an Apple Watch, which never reach Garmin
+# Connect. Strava receives uploads from both watches, so it is the only place
+# the complete history exists. Read-only; nothing is ever written to Strava.
+
+def _strava_redirect_uri(request: Request) -> str:
+    """
+    Callback URL for the OAuth round trip.
+
+    Forced to localhost rather than echoing the request host: Strava matches the
+    redirect against a single configured Authorization Callback Domain, and the
+    app is reachable on several hostnames (127.0.0.1, the LAN IP, the machine
+    name). Any of those would be rejected.
+    """
+    return f"http://localhost:{request.url.port or 8000}/api/strava/callback"
+
+
+@app.get("/api/strava/status")
+async def api_strava_status():
+    """Whether the Strava app is configured, connected, and what it holds."""
+    cache = tl.load_training_log() or {}
+    rows = cache.get("activities") or []
+    imported = [r for r in rows if r.get("source") == "strava"]
+    out = {
+        "configured": sv.app_configured(),
+        "connected": sv.is_connected(),
+        "imported": len(imported),
+        "athlete": None,
+        "error": None,
+    }
+    if out["connected"]:
+        try:
+            who = sv.athlete()
+            out["athlete"] = " ".join(
+                x for x in (who.get("firstname"), who.get("lastname")) if x
+            ) or who.get("username")
+        except sv.StravaError as e:
+            out["error"] = str(e)
+    return out
+
+
+@app.post("/api/strava/app")
+async def api_strava_save_app(
+    strava_client_id: str = Form(...),
+    strava_client_secret: str = Form(...),
+):
+    """Save the Strava API application credentials to the OS keychain."""
+    if not strava_client_id.strip() or not strava_client_secret.strip():
+        return RedirectResponse("/settings?error=strava_missing", status_code=303)
+    sv.save_app_credentials(strava_client_id, strava_client_secret)
+    return RedirectResponse("/settings?success=strava_saved#strava", status_code=303)
+
+
+@app.get("/api/strava/connect")
+async def api_strava_connect(request: Request):
+    """Send the athlete to Strava to grant read access."""
+    try:
+        return RedirectResponse(sv.authorize_url(_strava_redirect_uri(request)))
+    except sv.StravaError as e:
+        return RedirectResponse(f"/settings?error={quote(str(e))}#strava", status_code=303)
+
+
+@app.get("/api/strava/callback")
+async def api_strava_callback(request: Request, code: str = "", error: str = ""):
+    """Strava sends the athlete back here with an authorisation code."""
+    if error or not code:
+        reason = error or "Strava did not return an authorisation code."
+        return RedirectResponse(f"/settings?error={quote(reason)}#strava", status_code=303)
+    try:
+        sv.exchange_code(code)
+    except sv.StravaError as e:
+        return RedirectResponse(f"/settings?error={quote(str(e))}#strava", status_code=303)
+    return RedirectResponse("/settings?success=strava_connected#strava", status_code=303)
+
+
+@app.post("/api/strava/disconnect")
+async def api_strava_disconnect():
+    sv.disconnect()
+    return {"ok": True}
+
+
+@app.post("/api/strava/import")
+async def api_strava_import(full: bool = False):
+    """
+    Pull activities from Strava and fold in the ones Garmin never saw.
+
+    Duplicates are expected to be the overwhelming majority, since Garmin
+    forwards its own uploads to Strava. The report says how many were skipped
+    and why, so the result can be checked rather than taken on faith.
+    """
+    cache = tl.load_training_log() or {}
+    held = cache.get("activities") or []
+    try:
+        after = None if full else sv.last_import_epoch(held)
+        fetched = await asyncio.to_thread(sv.fetch_activities, after)
+    except sv.StravaError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    merged, report = dedupe.merge_imported(held, fetched)
+    if report["added"]:
+        tl.save_training_log(merged)
+
+    report["fetched"] = len(fetched)
+    report["total"] = len(merged)
+    return report
 
 
 @app.post("/api/credentials")
