@@ -582,13 +582,16 @@ async def _load_activity_history(force_refresh: bool = False) -> dict:
         }
 
     try:
-        activities = await asyncio.to_thread(fetch_activity_history, garmin_client)
+        fetched = await asyncio.to_thread(fetch_activity_history, garmin_client)
+        before = (cache or {}).get("activities") or []
+        activities = tl.merge_activities(before, fetched)
         saved = tl.save_training_log(activities)
         return {
             "activities": activities,
             "fetched_at": saved.get("fetched_at"),
             "stale": False,
             "error": None,
+            "added": max(0, len(activities) - len(before)),
         }
     except Exception as e:
         # Fall back to cache on any fetch error so the page still renders.

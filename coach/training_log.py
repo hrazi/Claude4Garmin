@@ -19,10 +19,12 @@ from .paths import user_data_dir
 CACHE_FILE = user_data_dir() / "training_log.json"
 SCHEMA_VERSION = 1
 
-# How long the cached history is considered fresh before a background refresh is
-# suggested. History rarely changes except for brand-new activities, so a few
-# hours is plenty for a single-user app.
-STALE_AFTER_HOURS = 6
+# How long the cached history is considered fresh before it is refetched.
+# This is the maximum delay before an activity you just finished shows up, so
+# it has to stay short: at six hours a morning run was still missing from the
+# grid (and from the weekly streak) all afternoon. A full refetch is ~9 paged
+# GETs and about two seconds, so hourly is cheap.
+STALE_AFTER_HOURS = 1
 
 
 def load_training_log() -> dict | None:
@@ -41,6 +43,44 @@ def load_training_log() -> dict | None:
         return raw
     except Exception:
         return None
+
+
+def merge_activities(
+    cached: list[dict] | None,
+    fetched: list[dict] | None,
+) -> list[dict]:
+    """
+    Merge a freshly fetched history into the cached one, keyed by activity_id.
+
+    A refresh used to replace the cache outright, which quietly trusted every
+    fetch to be complete. It isn't guaranteed to be: fetch_activity_history
+    stops as soon as a page comes back shorter than page_size, so a transient
+    short or empty page part-way through pagination looks exactly like the end
+    of the history. Replacing on that would have overwritten years of records
+    with a truncated list — and the weekly grid and streaks would have silently
+    reported the truncation as fact.
+
+    Merging removes that whole class of failure: the fetched copy of a row wins
+    (so renames and type corrections made on Garmin still propagate), and any
+    cached row the fetch didn't return is kept. The tradeoff is that an activity
+    deleted on Garmin lingers locally, which is the far better bug to have.
+
+    Returns the merged list, newest first.
+    """
+    merged: dict[str, dict] = {}
+    for row in cached or []:
+        key = str(row.get("activity_id") or "")
+        if key:
+            merged[key] = row
+    for row in fetched or []:
+        key = str(row.get("activity_id") or "")
+        if key:
+            merged[key] = row
+    return sorted(
+        merged.values(),
+        key=lambda r: (str(r.get("date") or ""), str(r.get("activity_id") or "")),
+        reverse=True,
+    )
 
 
 def save_training_log(activities: list[dict]) -> dict:
