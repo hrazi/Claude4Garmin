@@ -246,10 +246,50 @@ async function sendMessage() {
   }
 }
 
+// ── Restore conversation ──────────────────────────────────────────────
+
+/**
+ * Redraw the persisted conversation under the greeting.
+ *
+ * The chat was always saved server-side, but the page rendered only a fresh
+ * greeting, so switching to Activities or Charts and coming back looked
+ * exactly like the conversation had been discarded. The greeting stays on top
+ * as a "here is today" header and the restored turns follow it, scrolled to
+ * the bottom so the last thing said is what you land on.
+ */
+async function restoreConversation() {
+  let data;
+  try {
+    data = await fetch("/api/chat/history").then(r => r.json());
+  } catch {
+    return;   // Offline or coach not ready — the greeting alone still works.
+  }
+
+  if (data.persona) {
+    personaBadgeName.textContent = data.persona;
+    personaBadgeEl.hidden = false;
+  }
+
+  const msgs = data.messages || [];
+  if (!msgs.length) return;
+
+  const divider = document.createElement("div");
+  divider.className = "chat-divider";
+  divider.innerHTML = `<span>Earlier conversation</span>`;
+  messagesEl.appendChild(divider);
+
+  for (const m of msgs) appendMessage(m.role, m.content);
+
+  // Jump rather than smooth-scroll: this runs on load, and animating through
+  // a long history is just a distraction before the user can type.
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
 // ── Reset conversation ────────────────────────────────────────────────
 
 async function resetConversation() {
   if (isStreaming) return;
+  if (!confirm("Clear this conversation? Your coach will forget what you've discussed.")) return;
   await fetch("/api/reset", { method: "POST" });
 
   // Clear all messages except the initial greeting
@@ -380,6 +420,11 @@ tokenToggleBtn.addEventListener("click", () => {
 
 // Load on page init and refresh after each chat message
 refreshTokenUsage();
+
+// Redraw the saved conversation so leaving the tab no longer looks like
+// losing it. Runs after the token panel so a slow history call never delays
+// the rest of the page.
+restoreConversation();
 
 // ── Mobile sidebar toggle ─────────────────────────────────────────
 

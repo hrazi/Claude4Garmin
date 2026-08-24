@@ -19,6 +19,7 @@ Run with:
 import asyncio
 import json
 import os
+import re
 import secrets
 import hmac
 import socket
@@ -1325,6 +1326,59 @@ async def api_reset():
     return JSONResponse({"ok": True})
 
 
+# Enriched prompts are normally swapped for a clean version before being
+# stored, but a stream interrupted before that swap could persist the injected
+# block. Strip it on the way out so raw prompt text never reaches the screen.
+_RE_INJECTED = re.compile(r"^\[WORKOUT DETAIL for .*?\]\s*", re.DOTALL)
+
+
+def _history_for_display(coach_obj) -> list[dict]:
+    """
+    Flatten a coach's stored history into plain {role, content} bubbles.
+
+    The two providers store turns differently — Claude keeps
+    {role: user|assistant, content: str}, Gemini keeps
+    {role: user|model, parts: [{text: str}]} — so the normalising happens here
+    rather than making the browser understand both shapes.
+    """
+    out: list[dict] = []
+    for turn in getattr(coach_obj, "history", None) or []:
+        if not isinstance(turn, dict):
+            continue
+        if turn.get("content") is not None:
+            text = str(turn.get("content") or "")
+        else:
+            text = "".join(
+                str(p.get("text") or "")
+                for p in (turn.get("parts") or [])
+                if isinstance(p, dict)
+            )
+        text = _RE_INJECTED.sub("", text).strip()
+        if not text:
+            continue
+        role = "coach" if turn.get("role") in ("assistant", "model") else "user"
+        out.append({"role": role, "content": text})
+    return out
+
+
+@app.get("/api/chat/history")
+async def api_chat_history():
+    """
+    The conversation as the page should redraw it.
+
+    The chat was always persisted server-side, but the page only ever rendered
+    a fresh greeting, so opening any other tab and coming back was
+    indistinguishable from having the conversation thrown away. Returning it
+    here lets the browser restore what was already safely on disk.
+    """
+    if not coach:
+        return JSONResponse({"messages": [], "persona": None})
+    return JSONResponse({
+        "messages": _history_for_display(coach),
+        "persona": getattr(coach, "persona_name", None) if coach.active_persona else None,
+    })
+
+
 @app.get("/api/memory")
 async def api_get_memory():
     """Return current coach memory notes and metadata."""
@@ -1573,7 +1627,7 @@ async def api_set_persona(body: PersonaRequest):
     skill = skm.get_skill_by_trigger(body.trigger)
     if not skill or skill.get("type") != "persona":
         raise HTTPException(404, detail="Persona skill not found.")
-    coach.set_persona(skill["content"])
+    coach.set_persona(skill["content"], name=skill["trigger"])
     return JSONResponse({"ok": True, "trigger": skill["trigger"]})
 
 

@@ -147,19 +147,26 @@ class GeminiCoach:
 
     # ── Persona management ────────────────────────────────────────────────
 
-    def set_persona(self, persona_content: str) -> None:
+    def set_persona(self, persona_content: str, name: str | None = None) -> None:
         """Overlay a coaching persona on the base system prompt."""
         self._persona_content = persona_content
+        self._persona_name    = name
         self._system_prompt   = self._build_system_prompt()
 
     def clear_persona(self) -> None:
         """Remove the active persona and restore the base system prompt."""
         self._persona_content = None
+        self._persona_name    = None
         self._system_prompt   = self._build_system_prompt()
 
     @property
     def active_persona(self) -> bool:
         return self._persona_content is not None
+
+    @property
+    def persona_name(self) -> str | None:
+        """Trigger of the active persona, so the UI can redraw its chip."""
+        return getattr(self, "_persona_name", None)
 
     # ── Chat methods ──────────────────────────────────────────────────────
 
@@ -204,19 +211,29 @@ class GeminiCoach:
         persisted history clean (e.g., activity detail injection via #N references).
         """
         full_reply = ""
-        stream = await self._client.aio.models.generate_content_stream(
-            model=self._model_name,
-            contents=self._contents(user_message),
-            config=self._config(),
-        )
-        async for chunk in stream:
-            if chunk.text:
-                full_reply += chunk.text
-                yield chunk.text
-        stored_msg = display_message if display_message is not None else user_message
-        self.history.append({"role": "user",  "parts": [{"text": stored_msg}]})
-        self.history.append({"role": "model", "parts": [{"text": full_reply}]})
-        self._save_history()
+        completed  = False
+        try:
+            stream = await self._client.aio.models.generate_content_stream(
+                model=self._model_name,
+                contents=self._contents(user_message),
+                config=self._config(),
+            )
+            async for chunk in stream:
+                if chunk.text:
+                    full_reply += chunk.text
+                    yield chunk.text
+            completed = True
+        finally:
+            # See claude_client.chat_stream_async: navigating away mid-answer
+            # closes this generator, and without a finally the whole exchange
+            # was silently dropped instead of persisted.
+            if full_reply:
+                if not completed:
+                    full_reply += "\n\n*(interrupted — ask again to continue)*"
+                stored_msg = display_message if display_message is not None else user_message
+                self.history.append({"role": "user",  "parts": [{"text": stored_msg}]})
+                self.history.append({"role": "model", "parts": [{"text": full_reply}]})
+                self._save_history()
 
     def reset_history(self) -> None:
         """Clear conversation history and remove the persisted history file."""

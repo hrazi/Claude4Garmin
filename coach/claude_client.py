@@ -133,9 +133,10 @@ Here is the user's recent Garmin health data:
 
 Use this data to answer questions and give personalized recommendations."""
 
-    def set_persona(self, persona_content: str) -> None:
+    def set_persona(self, persona_content: str, name: str | None = None) -> None:
         """Overlay a coaching persona on the base system prompt."""
         self._persona_content = persona_content
+        self._persona_name    = name
         self.system_prompt = (
             self._base_system_prompt
             + "\n\n---\n\n"
@@ -145,11 +146,17 @@ Use this data to answer questions and give personalized recommendations."""
     def clear_persona(self) -> None:
         """Remove the active persona and restore the base system prompt."""
         self._persona_content = None
+        self._persona_name    = None
         self.system_prompt = self._base_system_prompt
 
     @property
     def active_persona(self) -> bool:
         return self._persona_content is not None
+
+    @property
+    def persona_name(self) -> str | None:
+        """Trigger of the active persona, so the UI can redraw its chip."""
+        return getattr(self, "_persona_name", None)
 
     def _cached_system(self) -> list[dict]:
         """Return system prompt as a content block with prompt caching enabled."""
@@ -226,22 +233,37 @@ Use this data to answer questions and give personalized recommendations."""
         """
         self.history.append({"role": "user", "content": user_message})
         full_reply = ""
-        async with self.async_client.messages.stream(
-            model=MODEL,
-            max_tokens=MAX_TOKENS,
-            system=self._cached_system(),
-            messages=self.history,
-        ) as stream:
-            async for chunk in stream.text_stream:
-                full_reply += chunk
-                yield chunk
-            final = await stream.get_final_message()
-            self._record_usage(final.usage)
-        # Replace the stored user message with the clean version if provided
-        if display_message is not None:
-            self.history[-1]["content"] = display_message
-        self.history.append({"role": "assistant", "content": full_reply})
-        self._save_history()
+        completed  = False
+        try:
+            async with self.async_client.messages.stream(
+                model=MODEL,
+                max_tokens=MAX_TOKENS,
+                system=self._cached_system(),
+                messages=self.history,
+            ) as stream:
+                async for chunk in stream.text_stream:
+                    full_reply += chunk
+                    yield chunk
+                final = await stream.get_final_message()
+                self._record_usage(final.usage)
+                completed = True
+        finally:
+            # Persisting in finally matters: navigating away mid-answer closes
+            # this generator, and the old code then saved nothing while leaving
+            # a user turn with no reply behind it in memory. Worse, that turn
+            # held the *enriched* prompt, so the injected workout block would
+            # surface in the history on the next save.
+            if display_message is not None:
+                self.history[-1]["content"] = display_message
+            if full_reply:
+                if not completed:
+                    full_reply += "\n\n*(interrupted — ask again to continue)*"
+                self.history.append({"role": "assistant", "content": full_reply})
+                self._save_history()
+            else:
+                # Nothing came back at all, so there is no exchange to keep and
+                # a lone user turn would just confuse the next request.
+                self.history.pop()
 
     def reset_history(self) -> None:
         """Clear conversation history and remove the persisted history file."""
