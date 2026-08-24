@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Garmin Health Coach</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="{{ static_url('style.css') }}" />
   <!-- marked.js for rendering Claude's markdown responses -->
   <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 </head>
@@ -129,7 +129,7 @@
   <!-- Backdrop for mobile sidebar overlay -->
   <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 
-  <script src="/static/app.js"></script>
+  <script src="{{ static_url('app.js') }}"></script>
   <script>
     // Proactive alerts banner (#5) — non-blocking, styled by severity.
     (function () {

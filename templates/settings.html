@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Settings — Garmin Health Coach</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="{{ static_url('style.css') }}" />
 </head>
 <body>
 
@@ -1228,7 +1228,7 @@
     }
   </script>
 
-  <script src="/static/units.js"></script>
+  <script src="{{ static_url('units.js') }}"></script>
   <script>
     // Keep the browser-side preference in step with the saved form value,
     // so Training Log and Analytics pick up a change made here.

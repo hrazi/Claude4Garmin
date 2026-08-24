@@ -370,6 +370,29 @@ app.mount("/static", StaticFiles(directory=str(bundle_dir() / "static")), name="
 templates = Jinja2Templates(directory=str(bundle_dir() / "templates"))
 
 
+def static_url(filename: str) -> str:
+    """
+    URL for a static asset, tagged with the file's modification time.
+
+    Without this the browser keeps serving whatever it cached, so a shipped
+    CSS or JS change simply does not arrive until the user happens to hard
+    refresh — which they have no reason to do, because from the outside the
+    feature just looks broken. Keying on mtime means the URL changes exactly
+    when the file does: new bytes are fetched immediately, unchanged files
+    stay cached.
+    """
+    try:
+        mtime = int((bundle_dir() / "static" / filename).stat().st_mtime)
+    except OSError:
+        # Missing file is the template's problem, not something to crash on
+        # here; fall back to the plain URL and let the 404 be visible.
+        return f"/static/{filename}"
+    return f"/static/{filename}?v={mtime}"
+
+
+templates.env.globals["static_url"] = static_url
+
+
 # ---------------------------------------------------------------------------
 # LAN access authentication (#2)
 # ---------------------------------------------------------------------------
