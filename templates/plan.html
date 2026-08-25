@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plan — Garmin Health Coach</title>
+  <link rel="stylesheet" href="{{ static_url('style.css') }}" />
+  <script src="{{ static_url('units.js') }}"></script>
+  <style>
+    .p-wrap { max-width: 1000px; margin: 0 auto; padding: 24px; padding-top: calc(var(--header-h,56px) + 20px); }
+    .p-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; gap:12px; flex-wrap:wrap; }
+    .p-head h2 { margin:0; font-size:20px; color:#2b2f36; }
+    .p-card { background:#fff; border:1px solid #ececf0; border-radius:12px; padding:16px 18px; margin-bottom:16px; }
+
+    .verdict { border-radius:12px; padding:18px; margin-bottom:16px; border:1px solid; }
+    .verdict h3 { margin:0 0 6px; font-size:17px; }
+    .verdict p { margin:0 0 10px; font-size:14px; line-height:1.5; }
+    .verdict ul { margin:10px 0 0; padding-left:18px; font-size:13px; line-height:1.7; color:#4a4f57; }
+    .v-ready { background:#eef8f1; border-color:#bfe3cc; } .v-ready h3 { color:#1f7a45; }
+    .v-tight { background:#fdf6e9; border-color:#f0dcae; } .v-tight h3 { color:#8a6314; }
+    .v-not_safe { background:#fdefec; border-color:#f2c9bf; } .v-not_safe h3 { color:#a83b23; }
+    .v-none { background:#f4f5f7; border-color:#e2e4e8; } .v-none h3 { color:#4a4f57; }
+
+    .alts { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; margin-top:14px; }
+    .alt { background:#fff; border:1px solid #e2e4e8; border-radius:10px; padding:12px 14px; }
+    .alt b { display:block; font-size:13px; color:#2b2f36; margin-bottom:5px; }
+    .alt span { font-size:12.5px; color:#5a6069; line-height:1.55; }
+
+    .p-card.today { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; }
+    .today-main { flex:1 1 300px; }
+    .t-kicker { font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:#9aa0a8; margin-bottom:6px; }
+    .t-session { font-size:19px; font-weight:700; color:#2b2f36; }
+    .t-note { font-size:13px; color:#6b7078; margin-top:6px; line-height:1.5; }
+    .t-verdict { font-size:14px; font-weight:600; margin-top:10px; }
+    .t-was { font-size:12.5px; color:#9aa0a8; text-decoration:line-through; margin-left:8px; font-weight:400; }
+    .a-keep { color:#1f7a45; } .a-caution { color:#8a6314; }
+    .a-ease { color:#a86a23; } .a-rest { color:#a83b23; } .a-unknown { color:#8a8f98; }
+    .t-signals { flex:0 0 auto; display:grid; grid-template-columns:repeat(2,auto); gap:6px 18px; font-size:12.5px; color:#5a6069; }
+    .t-signals b { color:#2b2f36; font-weight:600; }
+    .t-why { font-size:12.5px; color:#6b7078; margin-top:8px; line-height:1.6; }
+
+    .p-bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .p-bar select, .p-bar button { padding:8px 12px; border:1px solid #d7dae0; border-radius:8px; font-size:14px; background:#fff; cursor:pointer; }
+    .p-bar .primary { background:#2b2f36; color:#fff; border-color:transparent; }
+    .p-bar .danger { color:#b4442f; border-color:#e6cdc7; }
+
+    .timeline { display:flex; gap:3px; margin:14px 0 4px; }
+    .tl-seg { flex:1; height:8px; border-radius:3px; }
+    .tl-labels { display:flex; gap:3px; font-size:10.5px; color:#9aa0a8; text-transform:uppercase; letter-spacing:.05em; }
+    .tl-labels span { flex:1; text-align:center; overflow:hidden; white-space:nowrap; }
+    .ph-base { background:#8fb8e8; } .ph-build { background:#5566d8; }
+    .ph-peak { background:#3d2fa8; } .ph-recovery { background:#cfd4dc; }
+    .ph-taper { background:#9fd3b4; } .ph-race { background:#d8a53f; }
+
+    .wk { border:1px solid #ececf0; border-radius:12px; margin-bottom:10px; background:#fff; overflow:hidden; }
+    .wk.now { border-color:#5566d8; box-shadow:0 0 0 2px rgba(85,102,216,.12); }
+    .wk-top { display:flex; align-items:center; gap:12px; padding:11px 16px; cursor:pointer; flex-wrap:wrap; }
+    .wk-top:hover { background:#fafbfc; }
+    .wk-n { font-size:12px; color:#9aa0a8; min-width:78px; }
+    .wk-phase { font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; padding:2px 8px; border-radius:999px; color:#fff; }
+    .wk-vol { margin-left:auto; font-size:13px; color:#4a4f57; }
+    .wk-vol b { color:#2b2f36; }
+    .wk-flag { font-size:11px; color:#a86a23; background:#fdf6e9; border:1px solid #f0dcae; border-radius:999px; padding:2px 8px; }
+    .wk-days { display:grid; grid-template-columns:repeat(7,1fr); gap:1px; background:#eef0f3; border-top:1px solid #ececf0; }
+    .day { background:#fff; padding:9px 8px; min-height:64px; }
+    .day.is-today { background:#f5f6ff; }
+    .day-n { font-size:10px; color:#9aa0a8; text-transform:uppercase; letter-spacing:.05em; }
+    .day-t { font-size:12px; font-weight:600; color:#2b2f36; margin-top:3px; line-height:1.3; }
+    .day-k { font-size:11.5px; color:#6b7078; margin-top:2px; }
+    .day.rest .day-t { color:#b8bcc3; font-weight:500; }
+    .day.race { background:#fdf7ea; }
+    .p-empty { text-align:center; color:#8a8f98; padding:44px 20px; font-size:14px; line-height:1.6; }
+    .p-note { font-size:12px; color:#9aa0a8; margin-top:10px; line-height:1.6; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-left"><span class="header-icon">🗺️</span><span class="header-title">Plan</span></div>
+    <div class="header-right">
+      <a href="/" class="btn-ghost">💬 <span class="btn-text">Coach</span></a>
+      <a href="/charts" class="btn-ghost">📈 <span class="btn-text">Charts</span></a>
+      <a href="/analytics" class="btn-ghost">🔬 <span class="btn-text">Analytics</span></a>
+      <a href="/goals" class="btn-ghost">🎯 <span class="btn-text">Goals</span></a>
+      <a href="/review" class="btn-ghost">📝 <span class="btn-text">Review</span></a>
+      <a href="/activities" class="btn-ghost">📋 <span class="btn-text">Activities</span></a>
+      <a href="/daily" class="btn-ghost">📅 <span class="btn-text">Daily</span></a>
+      <a href="/settings" class="btn-ghost">⚙ <span class="btn-text">Settings</span></a>
+    </div>
+  </header>
+
+  <div class="p-wrap">
+    <div class="p-head">
+      <h2>Training plan</h2>
+      <div class="p-bar">
+        <select id="mode"></select>
+        <button class="primary" id="gen">Generate plan</button>
+        <button class="danger" id="del" hidden>Delete</button>
+      </div>
+    </div>
+
+    <div id="verdict"></div>
+    <div id="today"></div>
+    <div id="plan"><div class="p-empty">Loading…</div></div>
+  </div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+let STATE = {};
+
+const dist = (km) => (km == null ? '–' : Units.fmtFromKm(km, 1));
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T00:00:00');
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function renderVerdict(fz, plan) {
+  if (!fz) { $('#verdict').innerHTML = ''; return; }
+  const cls = ['ready','tight','not_safe'].includes(fz.status) ? 'v-' + fz.status : 'v-none';
+  const reasons = (fz.reasons || []).map(r => `<li>${esc(r)}</li>`).join('');
+  const alts = (fz.alternatives || []).map(a =>
+    `<div class="alt"><b>${esc(a.title)}</b><span>${esc(a.body)}</span></div>`).join('');
+  $('#verdict').innerHTML = `
+    <div class="verdict ${cls}">
+      <h3>${esc(fz.headline || '')}</h3>
+      <p>${esc(fz.detail || '')}</p>
+      ${reasons ? `<ul>${reasons}</ul>` : ''}
+      ${alts ? `<div class="alts">${alts}</div>` : ''}
+    </div>`;
+}
+
+function renderToday(t, plan) {
+  if (!plan || !t || !t.adaptation) { $('#today').innerHTML = ''; return; }
+  const ad = t.adaptation, s = ad.adjusted || ad.session;
+  if (!s) { $('#today').innerHTML = ''; return; }
+  const changed = ad.session && ad.adjusted && ad.session.type !== ad.adjusted.type;
+  const shortened = ad.session && ad.adjusted && !changed
+    && Math.abs((ad.session.km || 0) - (ad.adjusted.km || 0)) > 0.05;
+  const sig = t.signals || {};
+  const bits = [];
+  if (sig.sleep_hours != null) bits.push(['Sleep', `<b>${sig.sleep_hours.toFixed(1)}h</b>`]);
+  if (sig.sleep_score != null) bits.push(['Sleep score', `<b>${Math.round(sig.sleep_score)}</b>`]);
+  if (sig.hrv_last_night != null) bits.push(['HRV',
+    `<b>${Math.round(sig.hrv_last_night)}</b>${sig.hrv_baseline != null ? ' vs ' + Math.round(sig.hrv_baseline) : ''}`]);
+  if (sig.resting_hr != null) bits.push(['Resting HR',
+    `<b>${Math.round(sig.resting_hr)}</b>${sig.resting_hr_baseline != null ? ' vs ' + Math.round(sig.resting_hr_baseline) : ''}`]);
+  if (sig.stress_avg != null) bits.push(['Stress', `<b>${Math.round(sig.stress_avg)}</b>`]);
+
+  const why = (ad.reasons || []).length && ['rest','ease','caution'].includes(ad.action)
+    ? `<div class="t-why">Because ${esc(ad.reasons.join('; '))}.</div>` : '';
+
+  $('#today').innerHTML = `
+    <div class="p-card today">
+      <div class="today-main">
+        <div class="t-kicker">Today · ${esc(fmtDate(t.date))}</div>
+        <div class="t-session">${esc(s.label)}${s.km ? ' · ' + dist(s.km) : ''}
+          ${(changed || shortened) && ad.session
+            ? `<span class="t-was">${esc(ad.session.label)}${ad.session.km ? ' ' + dist(ad.session.km) : ''}</span>` : ''}
+        </div>
+        ${s.note ? `<div class="t-note">${esc(s.note)}</div>` : ''}
+        <div class="t-verdict a-${esc(ad.action)}">${esc(ad.headline || '')}</div>
+        ${why}
+      </div>
+      <div class="t-signals">
+        ${bits.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('')}
+      </div>
+    </div>`;
+}
+
+function renderPlan(plan, todayISO) {
+  if (!plan) {
+    $('#plan').innerHTML = `<div class="p-empty">No plan yet.<br>
+      Pick a target above and generate one.</div>`;
+    $('#del').hidden = true;
+    return;
+  }
+  $('#del').hidden = false;
+  const weeks = plan.weeks || [];
+  const segs = weeks.map(w => `<div class="tl-seg ph-${esc(w.phase)}" title="Week ${w.index}: ${esc(w.phase)}"></div>`).join('');
+  const labels = weeks.map(w => `<span>${w.index === 1 || w.phase !== (weeks[w.index - 2] || {}).phase ? esc(w.phase) : ''}</span>`).join('');
+
+  const cards = weeks.map(w => {
+    const isNow = todayISO >= w.start && todayISO <= w.end;
+    const byDay = {};
+    (w.sessions || []).forEach(s => { byDay[s.weekday] = s; });
+    const days = DAYS.map((dn, i) => {
+      const s = byDay[i];
+      const dISO = isoAdd(w.start, i);
+      const cls = ['day', s && s.type === 'rest' || !s ? 'rest' : '',
+                   s && s.type === 'race' ? 'race' : '', dISO === todayISO ? 'is-today' : ''].join(' ');
+      return `<div class="${cls}">
+        <div class="day-n">${dn} ${fmtDate(dISO).split(' ')[1] || ''}</div>
+        <div class="day-t">${esc(s ? s.label : 'Rest')}</div>
+        ${s && s.km ? `<div class="day-k">${dist(s.km)}</div>` : ''}
+      </div>`;
+    }).join('');
+    return `<div class="wk ${isNow ? 'now' : ''}">
+      <div class="wk-top">
+        <span class="wk-n">Week ${w.index}</span>
+        <span class="wk-phase ph-${esc(w.phase)}">${esc(w.phase)}</span>
+        <span class="wk-n">${esc(fmtDate(w.start))} – ${esc(fmtDate(w.end))}</span>
+        ${w.long_heavy ? `<span class="wk-flag">long-run heavy</span>` : ''}
+        <span class="wk-vol"><b>${dist(w.weekly_km)}</b> · long ${dist(w.long_run_km)}</span>
+      </div>
+      <div class="wk-days">${days}</div>
+    </div>`;
+  }).join('');
+
+  const t = plan.target || {}, r = plan.race || {};
+  const retarget = plan.retargeted
+    ? `<div class="p-note"><b>This plan trains for a ${esc(t.label)}, not the ${esc(r.label || '')}.</b>
+       Your current base does not safely support that distance in the time available.
+       Use the selector above to override.</div>` : '';
+
+  $('#plan').innerHTML = `
+    <div class="p-card">
+      <div class="t-kicker">Target</div>
+      <div class="t-session">${esc(t.label)} · ${esc(r.name || '')} on ${esc(fmtDate(r.date))}</div>
+      <div class="timeline">${segs}</div>
+      <div class="tl-labels">${labels}</div>
+      <div class="p-note">${plan.total_weeks} weeks · ${plan.days_per_week} days/week ·
+        starts at ${dist(plan.start_weekly_km)}/wk, peaks at ${dist(plan.peak_weekly_km)}/wk
+        with a ${dist(plan.peak_long_run_km)} long run.</div>
+      ${retarget}
+    </div>
+    ${cards}`;
+}
+
+function isoAdd(iso, days) {
+  const d = new Date(iso + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function fillModes(options, plan, race) {
+  const sel = $('#mode');
+  const cur = plan ? (plan.mode || 'auto') : 'auto';
+  const raceLabel = race ? (race.name || (race.spec || {}).label) : 'my race';
+  const raceKey = race && race.distance_key;
+  const opts = [['auto', 'Recommended (safest reachable)'],
+                ['race', `Train for ${raceLabel} anyway`]]
+    .concat((options || []).filter(o => o.key !== raceKey)
+                           .map(o => [o.key, `Train for a ${o.label}`]));
+  sel.innerHTML = opts.map(([k, l]) =>
+    `<option value="${esc(k)}"${k === cur ? ' selected' : ''}>${esc(l)}</option>`).join('');
+}
+
+async function load() {
+  const r = await fetch('/api/plan');
+  const d = await r.json();
+  STATE = d;
+  if (d.units) Units.set(d.units, { persist: false });
+  fillModes(d.options, d.plan, d.race);
+  renderVerdict(d.feasibility, d.plan);
+  renderToday(d.today, d.plan);
+  renderPlan(d.plan, (d.today || {}).date || new Date().toISOString().slice(0, 10));
+}
+
+$('#gen').addEventListener('click', async () => {
+  const btn = $('#gen');
+  btn.disabled = true; btn.textContent = 'Generating…';
+  try {
+    const r = await fetch('/api/plan/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: $('#mode').value })
+    });
+    const d = await r.json();
+    if (!r.ok) { alert(d.error || 'Could not generate a plan.'); return; }
+    await load();
+  } finally { btn.disabled = false; btn.textContent = 'Generate plan'; }
+});
+
+$('#del').addEventListener('click', async () => {
+  if (!confirm('Delete this training plan?')) return;
+  await fetch('/api/plan', { method: 'DELETE' });
+  await load();
+});
+
+Units.onChange(() => load());
+load();
+</script>
+</body>
+</html>

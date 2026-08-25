@@ -58,6 +58,7 @@ from . import activity_dedupe as dedupe
 from . import manual_activities as ma
 from . import checkin as ci
 from . import fueling as fl
+from . import training_plan as tp
 from .garmin_client import get_garmin_client, fetch_health_data, fetch_activity_history, format_health_summary, format_trend_summary, fill_readiness_estimates, backfill_sleep_times
 from .claude_client import ClaudeCoach
 from .paths import bundle_dir, user_data_dir
@@ -138,6 +139,20 @@ def _extra_context_notes(hd: dict, settings: dict) -> str:
     fuel = fl.format_for_prompt(fl.build(hd, nutrition_data, settings))
     if fuel:
         parts.append(fuel)
+    # The training plan, plus how today's session was adjusted to the athlete's
+    # actual recovery. Loaded from the saved plan only — never regenerated here,
+    # because building a plan needs the full history and this runs on every
+    # prompt.
+    plan = tp.load_plan()
+    if plan:
+        today = date.today()
+        adaptation = tp.adapt_session(
+            tp.session_for(plan, today), tp.readiness_signals(hd, today)
+        )
+        block = tp.format_for_prompt(plan, adaptation,
+                                     (settings or {}).get("units", "mi"), today)
+        if block:
+            parts.append(block)
     return "\n\n".join(parts)
 
 
@@ -831,6 +846,92 @@ async def api_delete_manual_activity(activity_id: str):
     return {"ok": True, "total_manual": len(ma.load_manual())}
 
 
+# ---------------------------------------------------------------------------
+# Training plan (#23)
+# ---------------------------------------------------------------------------
+
+async def _plan_context(force_refresh: bool = False) -> dict:
+    """Fitness, race and feasibility measured from the full cached history."""
+    settings = sm.load_settings()
+    history = await _load_activity_history(force_refresh=force_refresh)
+    activities = history.get("activities") or []
+    today = date.today()
+    fitness = tp.assess_fitness(activities, today)
+    race = tp.infer_race(gl.load_goals(), settings.get("athlete_profile"))
+    feasibility = tp.assess_feasibility(fitness, race, today)
+    return {"settings": settings, "fitness": fitness, "race": race,
+            "feasibility": feasibility, "today": today}
+
+
+def _today_payload(plan: dict | None) -> dict:
+    """Today's session and how the athlete's recovery changes it."""
+    today = date.today()
+    signals = tp.readiness_signals(_health_data_for_coach() or health_data, today)
+    session = tp.session_for(plan, today) if plan else None
+    adaptation = tp.adapt_session(session, signals)
+    return {"date": today.isoformat(), "signals": signals, "adaptation": adaptation,
+            "week": tp.current_week(plan, today) if plan else None}
+
+
+@app.get("/api/plan")
+async def api_plan():
+    plan = tp.load_plan()
+    ctx = await _plan_context()
+    return {
+        "plan": plan,
+        # Always recompute feasibility against today's fitness: a plan saved
+        # six weeks ago was assessed against a base the athlete no longer has.
+        "feasibility": ctx["feasibility"],
+        "fitness": ctx["fitness"],
+        "race": ctx["race"],
+        "today": _today_payload(plan),
+        "units": ctx["settings"].get("units", "mi"),
+        "options": [{"key": k, "label": v["label"]} for k, v in tp.RACES.items()],
+    }
+
+
+@app.get("/api/plan/today")
+async def api_plan_today():
+    return _today_payload(tp.load_plan())
+
+
+class PlanRequest(BaseModel):
+    mode: str = "auto"
+
+
+@app.post("/api/plan/generate")
+async def api_plan_generate(req: PlanRequest):
+    ctx = await _plan_context()
+    if not ctx["race"]:
+        return JSONResponse(
+            {"error": "No race goal with a date. Add one on the Goals page first."},
+            status_code=400)
+    if not ctx["fitness"].get("has_history"):
+        return JSONResponse(
+            {"error": "No run history to plan from. Sync activities or add a few by hand."},
+            status_code=400)
+    if not (ctx["race"].get("spec")):
+        return JSONResponse(
+            {"error": f"Couldn't tell what distance \u201c{ctx['race']['name']}\u201d is. "
+                      "Include 5K, 10K, half or marathon in the goal name."},
+            status_code=400)
+
+    plan = tp.build_plan(ctx["fitness"], ctx["race"], ctx["feasibility"],
+                         ctx["settings"].get("athlete_profile"), ctx["today"],
+                         mode=(req.mode or "auto"))
+    tp.save_plan(plan)
+    _rebuild_coach()
+    return {"plan": plan, "today": _today_payload(plan),
+            "units": ctx["settings"].get("units", "mi")}
+
+
+@app.delete("/api/plan")
+async def api_plan_delete():
+    existed = tp.clear_plan()
+    _rebuild_coach()
+    return {"ok": True, "deleted": existed}
+
+
 @app.get("/api/activities/{activity_id}")
 async def api_activity_detail(activity_id: str, fetch: int = 1):
     """One activity with its splits, HR zones and any strength sets."""
@@ -1097,6 +1198,13 @@ async def api_insights():
 # ---------------------------------------------------------------------------
 # Goals & progress tracking (#6)
 # ---------------------------------------------------------------------------
+
+@app.get("/plan", response_class=HTMLResponse)
+async def plan_page(request: Request):
+    if not garmin_connected:
+        return RedirectResponse("/settings")
+    return templates.TemplateResponse(request, "plan.html", {"request": request})
+
 
 @app.get("/goals", response_class=HTMLResponse)
 async def goals_page(request: Request):
