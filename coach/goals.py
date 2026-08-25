@@ -14,6 +14,7 @@ Goal shape:
     "unit": "kg" | "km" | "min/km" | "steps" | "h" | "bpm" | "",
     "date": "YYYY-MM-DD" | "",       # optional target date (races, deadlines)
     "direction": "increase" | "decrease" | "hit",  # how progress is judged
+    "baseline": <number>,            # decrease goals: value when first measured
     "created": "YYYY-MM-DD"
   }
 """
@@ -34,12 +35,95 @@ GOAL_TYPES = {
 }
 
 
+# Every goal is stored in the canonical unit of its type and converted only for
+# display, so changing the display preference never silently changes what a goal
+# means. The unit a goal was entered in is matched case-insensitively and by
+# alias: a target typed as "Mi" or "lbs" that fell through to the canonical
+# branch would be compared against kilometres or kilograms and quietly report
+# the wrong progress.
+_UNIT_ALIASES = {
+    "weekly_distance": {
+        "km": 1.0, "kms": 1.0, "kilometer": 1.0, "kilometers": 1.0,
+        "kilometre": 1.0, "kilometres": 1.0,
+        "mi": 1.609344, "mile": 1.609344, "miles": 1.609344,
+        "m": 0.001, "meter": 0.001, "meters": 0.001, "metre": 0.001, "metres": 0.001,
+    },
+    "weight": {
+        "kg": 1.0, "kgs": 1.0, "kilo": 1.0, "kilos": 1.0,
+        "kilogram": 1.0, "kilograms": 1.0,
+        "lb": 0.45359237, "lbs": 0.45359237,
+        "pound": 0.45359237, "pounds": 0.45359237,
+    },
+}
+
+
+class UnknownUnit(ValueError):
+    """Raised when a convertible goal names a unit we cannot interpret."""
+
+
+def canonical_target(gtype: str, unit: str, target):
+    """
+    Convert `target` from `unit` into the canonical unit for `gtype`.
+
+    Returns (target, canonical_unit). Unrecognised units on a convertible type
+    raise rather than defaulting to canonical: storing an ambiguous number is
+    how a 10-mile goal became a 10-km goal.
+    """
+    meta = GOAL_TYPES.get(gtype, {})
+    canon = meta.get("unit", "")
+    table = _UNIT_ALIASES.get(gtype)
+    if table is None:
+        return target, (unit or canon)
+    key = (unit or canon).strip().lower().rstrip(".")
+    if key not in table:
+        raise UnknownUnit(
+            f"Unrecognised unit {unit!r} for a {gtype.replace('_', ' ')} goal. "
+            f"Use one of: {', '.join(sorted({k for k in table}))}."
+        )
+    factor = table[key]
+    if target is not None and factor != 1.0:
+        target = round(target * factor, 2)
+    return target, canon
+
+
 # ---------------------------------------------------------------------------
 # CRUD (stored in settings)
 # ---------------------------------------------------------------------------
 
 def load_goals() -> list[dict]:
-    return sm.load_settings().get("goals") or []
+    goals = sm.load_settings().get("goals") or []
+    fixed = migrate_goals(goals)
+    if fixed is not goals:
+        save_goals(fixed)
+    return fixed
+
+
+def migrate_goals(goals: list[dict]) -> list[dict]:
+    """
+    Repair goals stored before targets were canonicalised.
+
+    Idempotent: a converted goal carries its canonical unit, so a second pass
+    is a no-op. Only rewrites rows whose unit is convertible and non-canonical,
+    which is exactly the set that was being compared against the wrong scale.
+    """
+    changed = False
+    out = []
+    for g in goals:
+        gtype = g.get("type")
+        table = _UNIT_ALIASES.get(gtype)
+        canon = GOAL_TYPES.get(gtype, {}).get("unit", "")
+        unit = (g.get("unit") or "").strip()
+        if table is None or not unit or unit.lower().rstrip(".") == canon:
+            out.append(g)
+            continue
+        try:
+            target, new_unit = canonical_target(gtype, unit, _num(g.get("target")))
+        except UnknownUnit:
+            out.append(g)
+            continue
+        out.append({**g, "target": target, "unit": new_unit})
+        changed = True
+    return out if changed else goals
 
 
 def save_goals(goals: list[dict]) -> None:
@@ -53,12 +137,7 @@ def add_goal(data: dict) -> dict:
     meta = GOAL_TYPES.get(gtype, {})
     unit = (data.get("unit") or meta.get("unit") or "").strip()
     target = _num(data.get("target"))
-    # Distance goals are stored canonically in km and converted for display, so
-    # switching the display unit never silently changes what a goal means.
-    if gtype == "weekly_distance":
-        if unit == "mi" and target is not None:
-            target = round(target * 1609.344 / 1000, 2)
-        unit = "km"
+    target, unit = canonical_target(gtype, unit, target)
     goal = {
         "id": uuid.uuid4().hex[:12],
         "type": gtype,
@@ -109,7 +188,15 @@ def _current_value(goal: dict, health_data: dict, activities: list[dict]) -> flo
     hd = health_data or {}
     t = goal.get("type")
     if t == "weight":
-        return _latest(hd.get("body_composition"), "weight")
+        # A smart scale fills body_composition, but most athletes have none. The
+        # weight typed into the athlete profile is a real measurement and is the
+        # only one many users will ever have, so fall back to it rather than
+        # rendering a goal that can never show progress.
+        measured = _latest(hd.get("body_composition"), "weight")
+        if measured is not None:
+            return measured
+        profile = sm.load_settings().get("athlete_profile") or {}
+        return _num(profile.get("weight_kg"))
     if t == "rhr":
         return _avg(hd.get("daily_stats"), "resting_hr", 7)
     if t == "steps":
@@ -132,9 +219,17 @@ def _current_value(goal: dict, health_data: dict, activities: list[dict]) -> flo
 def compute_progress(goals: list[dict], health_data: dict, activities: list[dict]) -> list[dict]:
     """Return goals annotated with current value, percent, status, and days_left."""
     out = []
+    baselines = {}
     for g in goals:
         cur = _current_value(g, health_data, activities)
         target = g.get("target")
+        # A "decrease" goal is meaningless without a starting point. Capture it
+        # the first time the metric is readable and persist it, so the number
+        # can never be recomputed from a moving reference.
+        if (g.get("direction") == "decrease" and g.get("baseline") is None
+                and cur is not None):
+            g = {**g, "baseline": cur}
+            baselines[g.get("id")] = cur
         pct = None
         status = "tracking"
         if cur is not None and isinstance(target, (int, float)) and target:
@@ -142,8 +237,18 @@ def compute_progress(goals: list[dict], health_data: dict, activities: list[dict
             if direction == "increase":
                 pct = max(0, min(100, round(cur / target * 100)))
             elif direction == "decrease":
-                # progress toward a lower target, measured from the created baseline
-                pct = 100 if cur <= target else max(0, min(100, round(target / cur * 100)))
+                # A ratio of target to current is not progress: someone starting
+                # at 100kg with an 82kg target would read 82% before losing a
+                # gram. Measure from where they actually started.
+                base = _num(g.get("baseline"))
+                if base is None:
+                    base = cur
+                if cur <= target:
+                    pct = 100
+                elif base <= target:
+                    pct = 0          # started at goal and drifted above it
+                else:
+                    pct = max(0, min(100, round((base - cur) / (base - target) * 100)))
             else:
                 pct = 100 if cur >= target else round(cur / target * 100)
             if pct >= 100:
@@ -155,6 +260,12 @@ def compute_progress(goals: list[dict], health_data: dict, activities: list[dict
             except ValueError:
                 pass
         out.append({**g, "current": cur, "percent": pct, "status": status, "days_left": days_left})
+    if baselines:
+        stored = load_goals()
+        for row in stored:
+            if row.get("id") in baselines:
+                row["baseline"] = baselines[row["id"]]
+        save_goals(stored)
     return out
 
 
@@ -163,12 +274,16 @@ def format_for_prompt(progress: list[dict], units: str = "km") -> str:
     if not progress:
         return ""
 
+    imperial = units == "mi"
+
     def show(g: dict, value: float) -> str:
-        # Distance goals are stored in km; speak to the athlete in their unit.
-        unit = g.get("unit", "")
-        if g.get("type") == "weekly_distance" and units == "mi":
-            return f"{round(value * 1000 / 1609.344, 1):g}mi"
-        return f"{value:g}{unit}"
+        # Goals are stored canonically; speak to the athlete in their own units.
+        gtype = g.get("type")
+        if gtype == "weekly_distance" and imperial:
+            return f"{round(value / 1.609344, 1):g}mi"
+        if gtype == "weight" and imperial:
+            return f"{round(value / 0.45359237, 1):g}lb"
+        return f"{value:g}{g.get('unit', '')}"
 
     lines = ["ACTIVE GOALS (keep advice aligned to these):"]
     for g in progress:

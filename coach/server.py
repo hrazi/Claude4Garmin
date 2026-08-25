@@ -1226,7 +1226,12 @@ async def api_goals_list():
 @app.post("/api/goals")
 async def api_goals_add(request: Request):
     data = await request.json()
-    goal = gl.add_goal(data)
+    try:
+        goal = gl.add_goal(data)
+    except gl.UnknownUnit as exc:
+        # Refuse rather than store an ambiguous target: a mis-read unit silently
+        # rescales the goal and every percentage computed from it.
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     _rebuild_coach()   # keep coach context aligned to the new goal
     return JSONResponse({"ok": True, "goal": goal})
 
