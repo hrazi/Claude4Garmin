@@ -21,6 +21,27 @@
     .an-sub { font-size: 12.5px; color: #8a8f98; margin-top: 3px; max-width: 640px; line-height: 1.5; }
     .an-canvas-box { position: relative; height: 420px; }
     .an-canvas-box.tall { height: 520px; }
+    /* #49 stress week grid */
+    .sb-weeks { display: flex; flex-direction: column; gap: 14px; }
+    .sb-week-label { font-size: 11.5px; color: #8a8f98; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+    .sb-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+    .sb-day {
+      border: 1px solid #ececf0; border-radius: 8px; padding: 7px 7px 6px; background: #fff;
+      cursor: pointer; text-align: left; font: inherit; overflow: hidden;
+    }
+    .sb-day:hover { border-color: #c3c7cf; }
+    .sb-day.sel { border-color: #2b2f36; box-shadow: 0 0 0 1px #2b2f36; }
+    .sb-day.void { cursor: default; opacity: .45; }
+    .sb-day.void:hover { border-color: #ececf0; }
+    .sb-dow { font-size: 10.5px; color: #9aa0a8; letter-spacing: .03em; }
+    .sb-dnum { font-size: 13px; font-weight: 600; color: #2b2f36; margin-bottom: 5px; }
+    .sb-strip { width: 100%; height: 30px; display: block; border-radius: 3px; background: #f3f4f6; }
+    .sb-meta { font-size: 10.5px; color: #8a8f98; margin-top: 5px; line-height: 1.4; }
+    .sb-meta b { font-weight: 600; color: #6a6f78; }
+    .sb-rest { font-size: 10.5px; color: #8a8f98; line-height: 1.4; min-height: 15px; }
+    .sb-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin: 4px 0 14px; font-size: 12px; color: #6a6f78; }
+    .sb-key { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+    .sb-warn { font-size: 12px; color: #c0793a; background: #fdf6ec; border: 1px solid #f5e3c8; border-radius: 8px; padding: 8px 11px; margin-bottom: 12px; }
     .an-state { text-align: center; color: #8a8f98; padding: 50px 20px; font-size: 15px; }
     .an-seg { display: inline-flex; border: 1px solid #d7dae0; border-radius: 8px; overflow: hidden; }
     .an-seg button { border: 0; background: #fff; color: #4a4f57; padding: 6px 11px; font-size: 12.5px; cursor: pointer; }
@@ -121,6 +142,7 @@ const VIEWS = [
   { id: 'efficiency',   label: '⚡ Efficiency trend' },
   { id: 'pace_curve',   label: '🏁 Pace curve' },
   { id: 'correlations', label: '🔗 Correlations' },
+  { id: 'stress_bands',  label: '🌡 Stress timeline' },
   { id: 'pillars',      label: '🕸 Fitness pillars' },
 ];
 
@@ -779,6 +801,231 @@ function wireBackfill() {
   });
 }
 
+// ----------------------------------------------------------- #49 stress bands
+const SB_COLORS = { rest: '#5b9bd5', low: '#5cb87a', medium: '#f0a63a', high: '#e2574c' };
+let sbDay = null;
+
+function sbClock(m) {
+  m = ((Math.round(m) % 1440) + 1440) % 1440;
+  return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+}
+function sbDur(min) {
+  if (min == null) return '–';
+  const h = Math.floor(min / 60), m = Math.round(min % 60);
+  return h ? `${h}h ${m}m` : `${m}m`;
+}
+function sbBand(v, bands) {
+  for (const b of bands) if (v <= b.max) return b.key;
+  return 'high';
+}
+
+// A 24h heat strip: one column per sample, coloured by band, gaps left blank.
+// Reads better than a line at thumbnail size and makes missing time obvious.
+function sbStrip(day, bands) {
+  if (!day.measured_samples) return '<svg class="sb-strip" viewBox="0 0 480 30"></svg>';
+  const cols = day.samples.map(([m, v]) =>
+    `<rect x="${m / 3}" y="0" width="1.05" height="30" fill="${SB_COLORS[sbBand(v, bands)]}"/>`
+  ).join('');
+  const rw = day.rest_window
+    ? `<rect x="${rw_x(day.rest_window.start)}" y="0" width="${rw_x(day.rest_window.minutes)}" height="30" fill="none" stroke="#2b2f36" stroke-width="1.2"/>`
+    : '';
+  return `<svg class="sb-strip" viewBox="0 0 480 30" preserveAspectRatio="none">${cols}${rw}</svg>`;
+}
+const rw_x = m => m / 3;
+
+function renderStressBands(d) {
+  if (!d || d.error) return body().innerHTML = empty('Stress data unavailable.');
+
+  if (!d.days_with_data) {
+    body().innerHTML = card('Stress timeline',
+      'Intraday stress banded rest / low / medium / high, so spikes are visible instead of averaged away.',
+      empty('No intraday stress cached yet. Daily averages alone cannot show when stress hit.') +
+      `<div style="text-align:center"><button class="an-btn" id="an-backfill" data-target="stress">Fetch intraday stress from Garmin</button></div>`);
+    return wireBackfill();
+  }
+
+  const days = d.days.filter(x => x.measured_samples);
+  if (!sbDay || !days.some(x => x.date === sbDay)) sbDay = days[0].date;
+  const sel = days.find(x => x.date === sbDay);
+
+  // Group into calendar weeks, newest week first, Monday-aligned.
+  const key = ds => {
+    const dt = new Date(ds + 'T00:00:00');
+    const off = (dt.getDay() + 6) % 7;              // Mon = 0
+    dt.setDate(dt.getDate() - off);
+    return dt.toISOString().slice(0, 10);
+  };
+  const byWeek = new Map();
+  d.days.forEach(x => {
+    const k = key(x.date);
+    if (!byWeek.has(k)) byWeek.set(k, []);
+    byWeek.get(k).push(x);
+  });
+
+  const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const weeks = [...byWeek.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([wk, list]) => {
+    const seen = new Map(list.map(x => [x.date, x]));
+    const cells = DOW.map((dow, i) => {
+      const dt = new Date(wk + 'T00:00:00');
+      dt.setDate(dt.getDate() + i);
+      const ds = dt.toISOString().slice(0, 10);
+      const day = seen.get(ds);
+      if (!day || !day.measured_samples) {
+        return `<div class="sb-day void"><div class="sb-dow">${dow}</div>
+          <div class="sb-dnum">${dt.getDate()}</div>
+          <svg class="sb-strip" viewBox="0 0 480 30"></svg>
+          <div class="sb-meta">no data</div><div class="sb-rest"></div></div>`;
+      }
+      const rest = day.rest_window ? `<b>${sbDur(day.rest_window.minutes)}</b> rest`
+        : day.sleep_known ? 'no rest window' : 'sleep not recorded';
+      return `<button class="sb-day ${ds === sbDay ? 'sel' : ''}" data-date="${ds}">
+        <div class="sb-dow">${dow}</div><div class="sb-dnum">${dt.getDate()}</div>
+        ${sbStrip(day, d.bands)}
+        <div class="sb-meta">avg ${day.avg ?? '–'}</div>
+        <div class="sb-rest">${rest}</div></button>`;
+    }).join('');
+    const label = new Date(wk + 'T00:00:00').toLocaleDateString(undefined,
+      { month: 'short', day: 'numeric' });
+    return `<div><div class="sb-week-label">Week of ${label}</div><div class="sb-grid">${cells}</div></div>`;
+  }).join('');
+
+  const legend = d.bands.map(b =>
+    `<span><span class="sb-key" style="background:${SB_COLORS[b.key]}"></span>${b.label} ${b.min}–${b.max}</span>`
+  ).join('') + '<span><span class="sb-key" style="background:#f3f4f6;border:1px solid #e2e4e8"></span>Not measured</span>';
+
+  const warns = [];
+  if (sel.coverage_pct < 60) {
+    warns.push(`Only ${sel.coverage_pct}% of this day was measured${sel.off_wrist_pct ? ` (watch off the wrist ${sel.off_wrist_pct}% of it)` : ''}. The average reflects the measured part, not the whole day.`);
+  }
+  if (!sel.sleep_known) {
+    warns.push('No sleep was recorded for this night, so the small hours cannot be told apart from a calm morning. The waking rest window is withheld rather than counting the night as rest.');
+  }
+  const warn = warns.map(w => `<div class="sb-warn">${w}</div>`).join('');
+
+  const restTxt = sel.rest_window
+    ? `${sbClock(sel.rest_window.start)}–${sbClock(sel.rest_window.end)}`
+    : 'none found';
+  // Without the night there is no way to tell the small hours from a calm
+  // morning, so the figure is withheld rather than quietly wrong.
+  const restStat = sel.rest_window ? sbDur(sel.rest_window.minutes)
+    : sel.sleep_known ? 'none' : 'unknown';
+
+  body().innerHTML = card('Stress timeline',
+    'Intraday stress in Garmin\u2019s own bands. Click any day in the grid to load its timeline.',
+    `<div class="an-stats">
+       ${stat(sel.avg ?? '–', 'day average')}
+       ${stat(sel.max ?? '–', 'day peak')}
+       ${stat(restStat, 'longest waking rest')}
+       ${stat(sel.coverage_pct + '%', 'day measured')}
+     </div>
+     <div class="sb-legend">${legend}</div>
+     ${warn}
+     <div class="an-canvas-box"><canvas id="c-stress"></canvas></div>
+     <div class="an-note">Showing <b>${sel.date}</b>. The boxed stretch is the longest unbroken waking window spent in the rest band${sel.rest_window ? `, ${restTxt}` : ''}. Sleep is shaded and excluded, since the calmest hours are always the night and that says nothing about the waking day. Gaps are minutes the watch did not score.${d.median_rest_minutes ? ` Median waking rest across charted days is ${sbDur(d.median_rest_minutes)}.` : ''}${d.days_missing_sleep ? ` ${d.days_missing_sleep} of the charted days have no sleep record, so no rest window is claimed for them.` : ''}</div>
+     <div class="an-title" style="margin:20px 0 10px">By week</div>
+     <div class="sb-weeks">${weeks}</div>`);
+
+  body().querySelectorAll('.sb-day[data-date]').forEach(b => {
+    b.onclick = () => { sbDay = b.dataset.date; render(); };
+  });
+
+  drawStressDay(sel, d);
+}
+
+function drawStressDay(sel, d) {
+  // Band backgrounds and the sleep/rest shading are drawn straight onto the
+  // canvas: the annotation plugin is not loaded, and a banded backdrop is the
+  // whole point of the chart rather than decoration.
+  const backdrop = {
+    id: 'sbBackdrop',
+    beforeDatasetsDraw(chart) {
+      const { ctx, chartArea: a, scales } = chart;
+      if (!a) return;
+      ctx.save();
+      d.bands.forEach(b => {
+        const top = scales.y.getPixelForValue(Math.min(b.max + 1, 100));
+        const bottom = scales.y.getPixelForValue(b.min);
+        ctx.fillStyle = SB_COLORS[b.key] + '14';
+        ctx.fillRect(a.left, top, a.right - a.left, bottom - top);
+      });
+      (sel.asleep || []).forEach(([s, e]) => {
+        const x1 = scales.x.getPixelForValue(s), x2 = scales.x.getPixelForValue(e);
+        ctx.fillStyle = 'rgba(60,66,80,.10)';
+        ctx.fillRect(x1, a.top, x2 - x1, a.bottom - a.top);
+      });
+      if (sel.rest_window) {
+        const x1 = scales.x.getPixelForValue(sel.rest_window.start);
+        const x2 = scales.x.getPixelForValue(sel.rest_window.end);
+        ctx.fillStyle = 'rgba(43,47,54,.07)';
+        ctx.fillRect(x1, a.top, Math.max(x2 - x1, 2), a.bottom - a.top);
+        ctx.strokeStyle = '#2b2f36'; ctx.lineWidth = 1.2;
+        ctx.strokeRect(x1, a.top, Math.max(x2 - x1, 2), a.bottom - a.top);
+      }
+      ctx.restore();
+    },
+  };
+
+  // Split the series wherever the watch stopped scoring, so the line never
+  // draws a confident stroke across time that was never measured.
+  const gap = d.interval_min * 3;
+  const pts = [];
+  let prev = null;
+  sel.samples.forEach(([m, v]) => {
+    if (prev !== null && m - prev > gap) pts.push({ x: prev + d.interval_min, y: null });
+    pts.push({ x: m, y: v });
+    prev = m;
+  });
+
+  charts.push(new Chart($('c-stress'), {
+    type: 'line',
+    data: {
+      datasets: [{
+        label: 'Stress',
+        data: pts,
+        borderColor: '#3c4250',
+        borderWidth: 1.4,
+        pointRadius: 0,
+        tension: 0.25,
+        spanGaps: false,
+        segment: {
+          borderColor: c => SB_COLORS[sbBand(Math.max(c.p0.parsed.y, c.p1.parsed.y), d.bands)],
+        },
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, parsing: false,
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: items => sbClock(items[0].parsed.x),
+            label: ctx => {
+              const b = d.bands.find(x => x.key === sbBand(ctx.parsed.y, d.bands));
+              return `Stress ${ctx.parsed.y} · ${b.label}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: 'linear', min: 0, max: 1440,
+          ticks: { stepSize: 180, callback: v => sbClock(v) },
+          grid: { color: '#f0f1f4' },
+          title: { display: true, text: 'Clock time' },
+        },
+        y: {
+          min: 0, max: 100,
+          ticks: { stepSize: 25 },
+          grid: { color: '#f0f1f4' },
+          title: { display: true, text: 'Stress level' },
+        },
+      },
+    },
+    plugins: [backdrop],
+  }));
+}
+
 function render() {
   destroyCharts();
   if (!DATA) return;
@@ -786,7 +1033,7 @@ function render() {
   ({
     heatmap: renderHeatmap, sleep_bands: renderSleepBands, hr_zones: renderZones,
     efficiency: renderEfficiency, pace_curve: renderPaceCurve, correlations: renderCorrelations,
-    pillars: renderPillars,
+    pillars: renderPillars, stress_bands: renderStressBands,
   })[current](d);
 }
 

@@ -11,6 +11,7 @@ Covers GitHub issues:
   #38 pace-per-heartbeat efficiency trend
   #42 pace-duration (best effort) curve
   #46 metric correlation matrix
+  #49 intraday stress bands + longest waking rest window
 """
 
 from __future__ import annotations
@@ -665,3 +666,237 @@ def _strength(r: float) -> str:
     if a >= 0.2:
         return "weak"
     return "negligible"
+
+
+# ------------------------------------------------------------ #49 stress bands
+
+#: Garmin's own four buckets. Reusing the watch's language means a band on this
+#: chart means the same thing as a band on the athlete's wrist.
+STRESS_BANDS = [
+    {"key": "rest",   "label": "Rest",   "min": 0,  "max": 25},
+    {"key": "low",    "label": "Low",    "min": 26, "max": 50},
+    {"key": "medium", "label": "Medium", "min": 51, "max": 75},
+    {"key": "high",   "label": "High",   "min": 76, "max": 100},
+]
+
+STRESS_INTERVAL_MIN = 3   # Garmin samples every 3 minutes: 480 slots per day.
+_REST_CEILING = 25        # Top of the rest band.
+_REST_GAP_TOL_MIN = 9     # Missing samples that still count as one window.
+_MIN_REST_WINDOW_MIN = 15 # Shorter than this is noise, not a recovery window.
+_SLOTS_PER_DAY = 1440 // STRESS_INTERVAL_MIN
+
+
+def encode_stress_samples(pairs: list) -> str:
+    """
+    Pack a day's [minute, level] samples into one comma-separated line.
+
+    Samples sit on a fixed 3-minute grid, so the minute is implied by position
+    and only the level needs storing; an empty field means the watch did not
+    score that slot. This exists because the cache is written with indent=2,
+    which puts every element of a list on its own line: kept as pairs, 90 days
+    of stress is 67,000 lines and 1.4 MB of mostly whitespace, which buries the
+    rest of the cache when reading it by hand. As one string per day it is
+    ~130 KB and stays greppable.
+    """
+    slots = [""] * _SLOTS_PER_DAY
+    for minute, level in pairs or []:
+        idx = int(minute) // STRESS_INTERVAL_MIN
+        if 0 <= idx < _SLOTS_PER_DAY:
+            slots[idx] = str(int(level))
+    return ",".join(slots).rstrip(",")
+
+
+def decode_stress_samples(value) -> list:
+    """
+    Unpack encode_stress_samples back into [minute, level] pairs.
+
+    Also accepts the raw pair list, so a cache written before the packed format
+    still renders instead of silently showing an empty chart.
+    """
+    if isinstance(value, list):
+        return [[int(m), int(v)] for m, v in value
+                if m is not None and v is not None]
+    if not isinstance(value, str) or not value:
+        return []
+    out = []
+    for idx, field in enumerate(value.split(",")):
+        field = field.strip()
+        if not field:
+            continue
+        try:
+            out.append([idx * STRESS_INTERVAL_MIN, int(field)])
+        except ValueError:
+            continue
+    return out
+
+
+def _band_for(level: int) -> str:
+    for band in STRESS_BANDS:
+        if level <= band["max"]:
+            return band["key"]
+    return "high"
+
+
+def _sleep_mask(sleep_rows: list):
+    """
+    Map each date to the minute ranges the athlete was asleep, plus the set of
+    dates whose preceding night is actually known.
+
+    A night that begins before midnight is split across the two dates it
+    actually covers, because the stress axis is a single calendar day. Without
+    the split, a 22:40 bedtime would leave the pre-midnight hours looking like
+    waking calm.
+
+    The known-nights set is what keeps the waking-rest figure honest. Some
+    nights are missing from Garmin entirely, and on those days the small hours
+    are indistinguishable from a calm morning, which is how an untreated day
+    ends up reporting seven hours of "waking rest".
+    """
+    mask: dict = {}
+    known: set = set()
+    for row in sleep_rows or []:
+        bed, wake = row.get("bedtime_local"), row.get("wake_local")
+        if not bed or not wake:
+            continue
+        try:
+            b = datetime.fromisoformat(str(bed))
+            w = datetime.fromisoformat(str(wake))
+        except ValueError:
+            continue
+        if w <= b:
+            continue
+        bd, wd = b.date().isoformat(), w.date().isoformat()
+        bm, wm = b.hour * 60 + b.minute, w.hour * 60 + w.minute
+        if bd == wd:
+            mask.setdefault(bd, []).append((bm, wm))
+        else:
+            mask.setdefault(bd, []).append((bm, 1440))
+            mask.setdefault(wd, []).append((0, wm))
+        # The night that *ends* on a date is the one covering its small hours.
+        known.add(wd)
+    return mask, known
+
+
+def _in_mask(minute: int, ranges: list) -> bool:
+    return any(start <= minute <= end for start, end in ranges)
+
+
+def _longest_rest_window(samples: list, asleep: list):
+    """
+    Longest unbroken waking stretch spent in the rest band.
+
+    Sleep is excluded on purpose. Every athlete's longest calm stretch is the
+    night, so including it would make this field report bedtime 365 days a year
+    and say nothing about the waking day, which is the part they can change.
+
+    An unmeasured gap ends the window rather than bridging it: claiming calm
+    across minutes the watch never scored would be inventing the very thing the
+    chart exists to show.
+    """
+    best = current = None
+    for minute, level in samples:
+        if level > _REST_CEILING or _in_mask(minute, asleep):
+            current = None
+            continue
+        if current is not None and (minute - current[1]) <= _REST_GAP_TOL_MIN:
+            current = (current[0], minute)
+        else:
+            current = (minute, minute)
+        if best is None or (current[1] - current[0]) > (best[1] - best[0]):
+            best = current
+
+    if not best:
+        return None
+    # Each sample represents the interval that follows it, so the window runs to
+    # the end of its final sample rather than to that sample's start. Clamp that
+    # tail if it would reach into sleep, so a wind-down window does not appear
+    # to overlap the night it ended in.
+    end = best[1] + STRESS_INTERVAL_MIN
+    for start, stop in asleep:
+        if best[1] < start < end:
+            end = start
+    minutes = end - best[0]
+    if minutes < _MIN_REST_WINDOW_MIN:
+        return None
+    return {"start": best[0], "end": end, "minutes": minutes}
+
+
+def build_stress_bands(stress_rows: list, sleep_rows: list | None = None,
+                       days: int = 28) -> dict:
+    """
+    Intraday stress timelines, banded, one entry per day (newest first).
+
+    Returns raw samples rather than a pre-binned series so the UI can draw both
+    the full-detail single-day timeline and the week grid from one payload.
+
+    Coverage is reported per day because it is not incidental: a day the watch
+    spent on the charger has a flattering average built from whatever fraction
+    it did measure, and the chart should be able to say so instead of showing a
+    calm day that never happened.
+    """
+    rows = [r for r in (stress_rows or []) if r.get("date")]
+    rows.sort(key=lambda r: str(r["date"]), reverse=True)
+    rows = rows[:max(1, days)]
+
+    mask, known_nights = _sleep_mask(sleep_rows)
+    slots_per_day = _SLOTS_PER_DAY
+    days_out, all_rest = [], []
+
+    for row in rows:
+        samples = decode_stress_samples(row.get("samples"))
+        counts = {b["key"]: 0 for b in STRESS_BANDS}
+        for _, level in samples:
+            counts[_band_for(level)] += 1
+
+        measured = len(samples)
+        levels = [v for _, v in samples]
+        asleep = mask.get(row["date"], [])
+        # Without the night, the small hours read as waking calm and the figure
+        # becomes a measure of how long the athlete slept. Report nothing rather
+        # than something confidently wrong.
+        sleep_known = row["date"] in known_nights
+        rest_window = (_longest_rest_window(samples, asleep)
+                       if samples and sleep_known else None)
+        if rest_window:
+            all_rest.append(rest_window["minutes"])
+
+        days_out.append({
+            "date": row["date"],
+            "samples": samples,
+            "measured_samples": measured,
+            # Percent of the 24h day actually scored. Off-wrist and
+            # unmeasurable slots both count as missing.
+            "coverage_pct": round(100 * measured / slots_per_day) if measured else 0,
+            "off_wrist_pct": round(
+                100 * (row.get("off_wrist_samples") or 0) / slots_per_day),
+            "band_minutes": {
+                k: v * STRESS_INTERVAL_MIN for k, v in counts.items()
+            },
+            "band_pct": {
+                k: (round(100 * v / measured) if measured else 0)
+                for k, v in counts.items()
+            },
+            # The cached average is Garmin's own; fall back to the samples when
+            # a day was captured before that field existed.
+            "avg": _num(row.get("avg")) if row.get("avg") is not None else (
+                round(sum(levels) / measured) if measured else None),
+            "max": _num(row.get("max")) if row.get("max") is not None else (
+                max(levels) if levels else None),
+            "rest_window": rest_window,
+            "sleep_known": sleep_known,
+            "asleep": asleep,
+            "error": row.get("error"),
+        })
+
+    with_data = [d for d in days_out if d["measured_samples"]]
+    return {
+        "days": days_out,
+        "bands": STRESS_BANDS,
+        "interval_min": STRESS_INTERVAL_MIN,
+        "rest_ceiling": _REST_CEILING,
+        "days_with_data": len(with_data),
+        "days_missing_sleep": len([d for d in with_data if not d["sleep_known"]]),
+        "median_rest_minutes": _median(all_rest),
+        "median_coverage_pct": _median([d["coverage_pct"] for d in with_data]),
+        "has_sleep_mask": bool(mask),
+    }

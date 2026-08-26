@@ -18,6 +18,7 @@ from garminconnect import (
     GarminConnectTooManyRequestsError,
 )
 
+from .analytics import encode_stress_samples
 from .paths import user_data_dir
 
 # Directory where garth saves OAuth session tokens
@@ -298,6 +299,126 @@ def _local_wall_clock(ms) -> Optional[str]:
         )
     except (ValueError, OSError, OverflowError):
         return None
+
+
+#: Garmin's own stress bands. The device reports 0-100 but the watch face and
+#: Connect both read it through these four buckets, so the chart uses the same
+#: language the athlete already sees rather than inventing new thresholds.
+STRESS_BANDS = [
+    ("rest", 0, 25),
+    ("low", 26, 50),
+    ("medium", 51, 75),
+    ("high", 76, 100),
+]
+
+#: Garmin encodes "no reading" as a negative sentinel inside the samples array
+#: rather than omitting the slot: -2 means the watch was off the wrist, -1 means
+#: it was worn but the signal was too noisy to score (usually during exercise).
+#: Treating either as a stress level of zero would invent deep calm out of
+#: missing data, which is the opposite of the truth during a hard run.
+STRESS_OFF_WRIST = -2
+STRESS_UNMEASURABLE = -1
+
+
+def _local_minute_offset(raw: dict):
+    """
+    Milliseconds to add to a GMT sample timestamp to get local wall clock.
+
+    Derived from the payload's own GMT/local start pair instead of the machine
+    timezone, so a day fetched from a different timezone than it was recorded
+    in still plots against the clock the athlete was actually reading.
+    """
+    gmt, local = raw.get("startTimestampGMT"), raw.get("startTimestampLocal")
+    if not gmt or not local:
+        return None
+    try:
+        g = datetime.fromisoformat(str(gmt).replace("Z", "").split(".")[0])
+        l = datetime.fromisoformat(str(local).split(".")[0])
+    except ValueError:
+        return None
+    return (l - g).total_seconds() * 1000
+
+
+def normalize_stress_day(date_str: str, raw: dict) -> dict:
+    """
+    Reduce a Garmin intraday stress payload to a compact plottable row.
+
+    Samples arrive as [epoch_ms, level] every 3 minutes, 480 per day. They are
+    stored as [minute_of_day, level] pairs holding only real readings: a day is
+    roughly 250-350 scored samples plus 100-200 sentinels, so dropping the
+    sentinels and the redundant date prefix keeps a 90-day cache around 1 MB
+    instead of 6 MB.
+
+    Gaps are deliberately left as gaps. The counts are kept so the UI can say
+    how much of the day went unmeasured instead of drawing a confident line
+    through a hole.
+    """
+    values = raw.get("stressValuesArray") or []
+    offset = _local_minute_offset(raw)
+    samples, off_wrist, unmeasurable = [], 0, 0
+
+    for entry in values:
+        if not isinstance(entry, (list, tuple)) or len(entry) < 2:
+            continue
+        ts, level = entry[0], entry[1]
+        if level is None:
+            continue
+        if level == STRESS_OFF_WRIST:
+            off_wrist += 1
+            continue
+        if level < 0:
+            unmeasurable += 1
+            continue
+        if ts is None or offset is None:
+            continue
+        # Modulo keeps a stray sample from the neighbouring day inside the
+        # 0-1439 axis rather than pushing the chart off its own scale.
+        samples.append([int(round((int(ts) + offset) / 60000)) % 1440, int(level)])
+
+    samples.sort()
+    return {
+        "date": date_str,
+        "samples": encode_stress_samples(samples),
+        "off_wrist_samples": off_wrist,
+        "unmeasurable_samples": unmeasurable,
+        "expected_samples": len(values),
+        "avg": _get(raw, "avgStressLevel"),
+        "max": _get(raw, "maxStressLevel"),
+    }
+
+
+def backfill_stress_intraday(client, rows: list, dates: list,
+                             limit: int = 90, progress=None) -> int:
+    """
+    Fetch intraday stress for cached days that predate this chart.
+
+    Without this the timeline would stay empty until 90 days of new data
+    accumulated, since the daily cache only ever stored the average and max.
+    Newest days are fetched first so the chart fills in from the end the
+    athlete is most likely to look at. Days the device never scored are marked
+    so they are not retried on every run. Returns the number of days added; the
+    caller persists the cache.
+    """
+    have = {r.get("date") for r in rows or []}
+    todo = [d for d in sorted(dates, reverse=True) if d and d not in have][:limit]
+
+    added = 0
+    for i, date_str in enumerate(todo, 1):
+        try:
+            row = normalize_stress_day(date_str, client.get_stress_data(date_str) or {})
+            if not row["samples"] and not row["off_wrist_samples"]:
+                row["error"] = "not recorded"
+            rows.append(row)
+            if row.get("samples"):
+                added += 1
+        except Exception as e:
+            rows.append({"date": date_str, "samples": [], "error": str(e)})
+
+        if progress:
+            progress(i, len(todo), date_str)
+
+    rows.sort(key=lambda r: str(r.get("date") or ""), reverse=True)
+    return added
 
 
 METERS_PER_MILE = 1609.344
@@ -626,6 +747,7 @@ def fetch_health_data(
         "training_readiness": [],
         "training_status": None,
         "body_composition": [],
+        "stress_intraday": [],
     }
 
     for day in date_range:
@@ -650,6 +772,19 @@ def fetch_health_data(
                 stats = {"date": date_str, "error": str(e)}
 
             health_data["daily_stats"].append(stats)
+
+            # --- Intraday stress (one sample per 3 min) ---
+            # Rides on the daily-stats toggle because it is the same metric at
+            # finer resolution; a second setting for it would only let the two
+            # fall out of sync.
+            try:
+                health_data["stress_intraday"].append(
+                    normalize_stress_day(date_str, client.get_stress_data(date_str) or {})
+                )
+            except Exception as e:
+                health_data["stress_intraday"].append(
+                    {"date": date_str, "samples": [], "error": str(e)}
+                )
 
         # --- Sleep data ---
         if fetch_sleep:

@@ -59,7 +59,7 @@ from . import manual_activities as ma
 from . import checkin as ci
 from . import fueling as fl
 from . import training_plan as tp
-from .garmin_client import get_garmin_client, fetch_health_data, fetch_activity_history, format_health_summary, format_trend_summary, fill_readiness_estimates, backfill_sleep_times
+from .garmin_client import get_garmin_client, fetch_health_data, fetch_activity_history, format_health_summary, format_trend_summary, fill_readiness_estimates, backfill_sleep_times, backfill_stress_intraday
 from .claude_client import ClaudeCoach
 from .paths import bundle_dir, user_data_dir
 
@@ -1109,6 +1109,9 @@ async def api_analytics(view: str = "all", days: int = 90):
         "efficiency": lambda: an.build_efficiency(activities),
         "pace_curve": lambda: an.build_pace_curve(activities),
         "correlations": lambda: an.build_correlations(hd, activities, days=days),
+        "stress_bands": lambda: an.build_stress_bands(
+            hd.get("stress_intraday"), hd.get("sleep"), days=min(days, 28)
+        ),
         "pillars": lambda: pl.build_pillars(hd, activities),
     }
 
@@ -1182,6 +1185,18 @@ async def api_analytics_backfill(request: Request):
             ac.save_activity_details(details)   # fault-tolerant: save each
         activity_details = details
         result["activities_enriched"] = fetched
+
+    if target in ("all", "stress"):
+        rows = (health_data or {}).setdefault("stress_intraday", [])
+        # Only days the cache already knows about, so backfill never widens the
+        # archive window behind the retention policy's back.
+        dates = [d.get("date") for d in (health_data or {}).get("daily_stats") or []]
+        added = await asyncio.to_thread(
+            backfill_stress_intraday, garmin_client, rows, dates
+        )
+        if added:
+            await asyncio.to_thread(dc.save_cache, health_data)
+        result["stress_days"] = added
 
     return JSONResponse(result)
 

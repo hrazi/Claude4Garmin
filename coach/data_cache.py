@@ -148,6 +148,21 @@ def merge(cached_health: dict, new_health: dict, days_back: int) -> dict:
             reverse=True,
         )
 
+    # Intraday stress — same merge, except a failed refetch must not overwrite
+    # a day already captured. These rows are ~250 samples each and are only
+    # fetchable while Garmin retains the day, so replacing a good day with an
+    # empty error row would lose it permanently rather than just delay it.
+    si_by_date = {e["date"]: e for e in cached_health.get("stress_intraday", [])}
+    for entry in new_health.get("stress_intraday", []):
+        old = si_by_date.get(entry.get("date"))
+        if entry.get("samples") or not (old or {}).get("samples"):
+            si_by_date[entry["date"]] = entry
+    result["stress_intraday"] = sorted(
+        (e for e in si_by_date.values() if e.get("date", "") >= cutoff),
+        key=lambda e: e["date"],
+        reverse=True,
+    )
+
     # Body composition — merge by date, trim to window
     bc_by_date = {e["date"]: e for e in cached_health.get("body_composition", [])}
     bc_by_date.update({e["date"]: e for e in new_health.get("body_composition", [])})
